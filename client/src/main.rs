@@ -113,7 +113,7 @@ impl App {
             return;
         };
         let content = match (self.invite_copied, self.invite_cmd.clone()) {
-            (true, _) => format!("join key {key} · invite + key copied to clipboard"),
+            (true, _) => format!("join key {key} · invite copied to clipboard"),
             (false, Some(cmd)) => format!("join key {key} · guests run: {cmd}"),
             (false, None) => format!("join key {key}"),
         };
@@ -325,7 +325,7 @@ fn message_line(msg: &ChatMessage) -> Line<'static> {
                 .add_modifier(Modifier::ITALIC),
         )),
         MsgKind::Invite => Line::from(vec![
-            Span::styled("  🔗 ", Style::default().fg(Color::Green)),
+            Span::styled("  > ", Style::default().fg(Color::Green)),
             Span::styled(
                 msg.content.clone(),
                 Style::default()
@@ -379,7 +379,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
         ]),
         Phase::Key if app.auto_key.is_some() => Line::from(vec![
-            Span::styled("🔑 signing in  ", Style::default().fg(Color::Yellow)),
+            Span::styled("> signing in  ", Style::default().fg(Color::Yellow)),
             Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
             Span::styled("  ·  user: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
@@ -390,7 +390,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             ),
         ]),
         Phase::Key => Line::from(vec![
-            Span::styled("🔑 join key required  ", Style::default().fg(Color::Yellow)),
+            Span::styled("> join key required  ", Style::default().fg(Color::Yellow)),
             Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
             Span::styled("  ·  user: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
@@ -650,7 +650,7 @@ async fn main() -> AppResult<()> {
         if tc.len() >= 24 {
             let local_port = pick_local_port();
             eprintln!(
-                "🌐 tailcat: forwarding to 127.0.0.1:{local_port} (remote port {remote_port})…"
+                "tailcat: forwarding to 127.0.0.1:{local_port} (remote port {remote_port})..."
             );
             let guard = start_forward(&tc, local_port, remote_port)?;
             wait_for_forward(local_port).await?;
@@ -721,7 +721,7 @@ async fn main() -> AppResult<()> {
     } else if !app.connected {
         println!("Disconnected from server.");
     } else {
-        println!("Goodbye 👋");
+        println!("Goodbye.");
     }
     Ok(())
 }

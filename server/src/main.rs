@@ -124,9 +124,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_token = format!("{}{}", generate_key(), generate_key());
 
     let listener = TcpListener::bind(&address).await?;
-    println!("🚀 Vanish server listening on {address}");
+    println!("vanish: listening on {address}");
     println!(
-        "🔑 Join key (this run only): {}   expires when this server stops",
+        "vanish: join key {} (this run only; expires when this server stops)",
         display_key(&key)
     );
 
@@ -134,17 +134,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tailcat: Option<Child> = None;
     let mut share: Option<String> = None;
     if std::env::var("CHAT_TAILCAT").ok().as_deref() != Some("0") {
-        println!("⏳ starting tailcat…");
+        println!("tailcat: starting...");
         match start_tailcat(port).await {
             Ok((child, tc_addr)) => {
-                println!("🌐 tailcat address: {tc_addr}");
-                println!("👉 Guests connect with:  cargo run -p vanish-client -- {tc_addr}:{port}");
+                println!("tailcat: address {tc_addr}");
+                println!(
+                    "tailcat: guests connect with  cargo run -p vanish-client -- {tc_addr}:{port}"
+                );
                 println!("   (tailcat runs in the background; it stops with this server)");
                 share = Some(format!("{tc_addr}:{port}"));
                 tailcat = Some(child);
             }
             Err(e) => {
-                println!("⚠ tailcat not started ({e}). Running local-only.");
+                println!("tailcat: not started ({e}); running local-only.");
                 println!(
                     "   install with: brew install tailcat   (or set CHAT_TAILCAT=0 to silence)"
                 );
@@ -174,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .unwrap_or(false);
     if invite_copied {
-        println!("📋 invite + join key copied to your clipboard");
+        println!("vanish: invite + join key copied to clipboard");
     }
 
     let (host_tx, mut host_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -197,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
             Err(e) => {
-                eprintln!("⚠ could not start local client ({e}). Running headless.");
+                eprintln!("vanish: could not start local client ({e}); running headless.");
             }
         }
     }
@@ -219,11 +221,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(mut child) = tailcat.take() {
                     let _ = child.kill().await;
                 }
-                println!("👋 shutting down");
+                println!("vanish: shutting down");
                 break;
             }
             _ = host_rx.recv(), if hosting => {
-                println!("👋 host left the chat — shutting down");
+                println!("vanish: host left the chat; shutting down");
                 if let Some(mut child) = tailcat.take() {
                     let _ = child.kill().await;
                 }
@@ -271,7 +273,7 @@ fn spawn_local_client(
     if !bin.exists() {
         let root = dir.parent().and_then(|target| target.parent());
         if let Some(root) = root {
-            eprintln!("… building vanish-client (first run)");
+            eprintln!("vanish: building vanish-client (first run)");
             let status = std::process::Command::new("cargo")
                 .args(["build", "-q", "-p", "vanish-client"])
                 .current_dir(root)
@@ -471,9 +473,9 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr, id: u64, hub: Arc<Hu
     }
 
     if !hub.quiet {
-        println!("🟢 {} connected.", username);
+        println!("+ {username} connected.");
     }
-    broadcast(&hub, &format!("📢 *** {} joined the chat ***\n", username)).await;
+    broadcast(&hub, &format!("*** {username} joined the chat ***\n")).await;
 
     // 5. Writer task: channel -> TCP stream. `Close` ends the connection.
     let write_task = tokio::spawn(async move {
@@ -537,16 +539,16 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr, id: u64, hub: Arc<Hu
     }
     write_task.abort();
     if !hub.quiet {
-        println!("🔴 {} disconnected.", username);
+        println!("- {username} disconnected.");
     }
     if kicked {
         broadcast(
             &hub,
-            &format!("📢 *** {} was removed by the host ***\n", username),
+            &format!("*** {username} was removed by the host ***\n"),
         )
         .await;
     } else {
-        broadcast(&hub, &format!("📢 *** {} left the chat ***\n", username)).await;
+        broadcast(&hub, &format!("*** {username} left the chat ***\n")).await;
     }
 }
 
@@ -593,7 +595,7 @@ async fn handle_kick(hub: &Hub, host: &str, target: &str, host_tx: &mpsc::Unboun
     )));
 
     if !hub.quiet {
-        println!("🔑 removed {target}; new join key: {display}");
+        println!("vanish: removed {target}; new join key {display}");
     }
 }
 

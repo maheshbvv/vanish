@@ -8,7 +8,7 @@ no accounts, no database, no inbound ports.
 ┌ Vanish ──────────────────────────────────────┐
 │● connected  127.0.0.1:8080  ·  you: alice     │
 └──────────────────────────────────────────────┘
-  📢  *** alice joined the chat ***
+  *** alice joined the chat ***
 00:45 alice   hello everyone
 00:45 bob     hi alice
 ┌ Message ─────────────────────────────────────┐
@@ -123,8 +123,8 @@ The server starts tailcat for you and prints a ready-to-share line:
 
 ```bash
 cargo run -p vanish-server
-# 🌐 tailcat address: tcomFwWCCcjS5nKNqAod034nWoJZW0LZq
-# 👉 Guests connect with:  cargo run -p vanish-client -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
+# tailcat: address tcomFwWCCcjS5nKNqAod034nWoJZW0LZq
+# tailcat: guests connect with  cargo run -p vanish-client -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
 ```
 
 A guest pastes that command:
@@ -194,7 +194,7 @@ The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equival
 - **Server** (`server/`): a Tokio TCP listener. Per connection it asks for a username,
   then a join key (3 tries), then sends `AUTH_OK` and registers the client. Every chat
   line is broadcast to all connected clients as `[username] message`; system events are
-  sent as `📢 ...` lines. Duplicate usernames are rejected.
+  sent as `*** ... ***` lines. Duplicate usernames are rejected.
 - **Host mode**: when stdin is a terminal (and `CHAT_HOST` is not `0`), the server
   launches the sibling `vanish-client` binary on `127.0.0.1:<port>` with inherited
   stdio and the join key in `VANISH_KEY`. The client auto-submits the key, suppressing
