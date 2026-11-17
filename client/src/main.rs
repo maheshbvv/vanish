@@ -1,0 +1,571 @@
+use std::collections::VecDeque;
+use std::io;
+use std::process::Stdio;
+use std::time::Duration;
+
+use chrono::Local;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::{Frame, Terminal};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+use tokio::process::Command;
+use tokio::sync::mpsc;
+
+type AppResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(PartialEq)]
+enum Phase {
+    Login,
+    Key,
+    Chat,
+}
+
+enum MsgKind {
+    Chat,
+    Me,
+    System,
+}
+
+struct ChatMessage {
+    time: String,
+    sender: String,
+    content: String,
+    kind: MsgKind,
+}
+
+struct App {
+    address: String,
+    phase: Phase,
+    input: String,
+    username: String,
+    messages: Vec<ChatMessage>,
+    list_state: ListState,
+    connected: bool,
+    /// Messages we rendered locally and are still waiting to see echoed by the server.
+    pending_self: VecDeque<String>,
+    auth_error: Option<String>,
+    should_quit: bool,
+}
+
+enum Action {
+    None,
+    Send(String),
+    Quit,
+}
+
+impl App {
+    fn new(address: String) -> Self {
+        Self {
+            address,
+            phase: Phase::Login,
+            input: String::new(),
+            username: String::new(),
+            messages: Vec::new(),
+            list_state: ListState::default(),
+            connected: true,
+            pending_self: VecDeque::new(),
+            auth_error: None,
+            should_quit: false,
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> Action {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            return Action::Quit;
+        }
+        match key.code {
+            KeyCode::Char(c) => {
+                self.input.push(c);
+                Action::None
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+                Action::None
+            }
+            KeyCode::Enter => {
+                let text = self.input.trim().to_string();
+                if text.is_empty() {
+                    return Action::None;
+                }
+                self.input.clear();
+                match self.phase {
+                    Phase::Login => {
+                        self.username = text.clone();
+                        self.phase = Phase::Key;
+                        Action::Send(format!("{text}\n"))
+                    }
+                    Phase::Key => Action::Send(format!("{text}\n")),
+                    Phase::Chat => {
+                        self.push_local_message(text.clone());
+                        Action::Send(format!("{text}\n"))
+                    }
+                }
+            }
+            _ => Action::None,
+        }
+    }
+
+    /// Render our own message immediately so it is visible even before (or
+    /// without) the server echoing it back.
+    fn push_local_message(&mut self, content: String) {
+        self.messages.push(ChatMessage {
+            time: Local::now().format("%H:%M").to_string(),
+            sender: self.username.clone(),
+            content: content.clone(),
+            kind: MsgKind::Me,
+        });
+        self.pending_self.push_back(content);
+        self.select_last();
+    }
+
+    fn select_last(&mut self) {
+        self.list_state
+            .select(Some(self.messages.len().saturating_sub(1)));
+    }
+
+    fn push_server_line(&mut self, raw: &str) {
+        let line = raw.trim_end_matches(['\r', '\n']).trim();
+        if line.is_empty() {
+            return;
+        }
+
+        if let Some(rest) = line.strip_prefix("AUTH_OK") {
+            let _ = rest;
+            self.phase = Phase::Chat;
+            self.connected = true;
+            return;
+        }
+        if let Some(rest) = line.strip_prefix("AUTH_FAIL") {
+            let reason = rest.trim();
+            self.auth_error = Some(if reason.is_empty() {
+                "join rejected".to_string()
+            } else {
+                reason.to_string()
+            });
+            self.should_quit = true;
+            return;
+        }
+
+        // Ignore handshake prompts until we are fully in chat mode.
+        if self.phase != Phase::Chat {
+            return;
+        }
+
+        let msg = parse_line(line, &self.username);
+
+        // If this is the server echoing a message we already showed locally,
+        // drop the duplicate.
+        if matches!(msg.kind, MsgKind::Me) {
+            if let Some(front) = self.pending_self.front() {
+                if *front == msg.content {
+                    self.pending_self.pop_front();
+                    return;
+                }
+            }
+        }
+
+        self.messages.push(msg);
+        self.select_last();
+    }
+}
+
+fn parse_line(line: &str, me: &str) -> ChatMessage {
+    let time = Local::now().format("%H:%M").to_string();
+    if let Some(rest) = line.strip_prefix('[') {
+        if let Some(idx) = rest.find("] ") {
+            let sender = &rest[..idx];
+            let content = &rest[idx + 2..];
+            let kind = if sender == me {
+                MsgKind::Me
+            } else {
+                MsgKind::Chat
+            };
+            return ChatMessage {
+                time,
+                sender: sender.to_string(),
+                content: content.to_string(),
+                kind,
+            };
+        }
+    }
+    ChatMessage {
+        time,
+        sender: String::new(),
+        content: line.to_string(),
+        kind: MsgKind::System,
+    }
+}
+
+fn sender_color(name: &str) -> Color {
+    const PALETTE: [Color; 6] = [
+        Color::Green,
+        Color::Magenta,
+        Color::Yellow,
+        Color::Blue,
+        Color::LightRed,
+        Color::LightCyan,
+    ];
+    let sum: usize = name.bytes().map(|b| b as usize).sum();
+    PALETTE[sum % PALETTE.len()]
+}
+
+fn message_line(msg: &ChatMessage) -> Line<'static> {
+    match msg.kind {
+        MsgKind::System => Line::from(Span::styled(
+            format!("  {}", msg.content.trim_end()),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )),
+        MsgKind::Me => Line::from(vec![
+            Span::styled(format!("{} ", msg.time), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:<8}", msg.sender),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(msg.content.clone(), Style::default().fg(Color::White)),
+        ]),
+        MsgKind::Chat => Line::from(vec![
+            Span::styled(format!("{} ", msg.time), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{:<8}", msg.sender),
+                Style::default()
+                    .fg(sender_color(&msg.sender))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(msg.content.clone(), Style::default().fg(Color::White)),
+        ]),
+    }
+}
+
+fn ui(f: &mut Frame, app: &mut App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ])
+        .split(f.size());
+
+    // Header
+    let header_text = match app.phase {
+        Phase::Login => Line::from(vec![
+            Span::styled("○ connecting  ", Style::default().fg(Color::Yellow)),
+            Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
+        ]),
+        Phase::Key => Line::from(vec![
+            Span::styled("🔑 join key required  ", Style::default().fg(Color::Yellow)),
+            Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
+            Span::styled("  ·  user: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.username.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Phase::Chat if app.connected => Line::from(vec![
+            Span::styled("● connected  ", Style::default().fg(Color::Green)),
+            Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
+            Span::styled("  ·  you: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.username.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Phase::Chat => Line::from(Span::styled(
+            "○ disconnected",
+            Style::default().fg(Color::Red),
+        )),
+    };
+    let header = Paragraph::new(header_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(Span::styled(
+                " Vanish ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+    );
+    f.render_widget(header, chunks[0]);
+
+    // Messages
+    let items: Vec<ListItem> = app
+        .messages
+        .iter()
+        .map(|m| ListItem::new(message_line(m)))
+        .collect();
+    let list = List::new(items);
+    f.render_stateful_widget(list, chunks[1], &mut app.list_state);
+
+    // Input
+    let (title, placeholder) = match app.phase {
+        Phase::Login => (" Username ", "type a username and press Enter"),
+        Phase::Key => (" Join key ", "paste the join key printed by the server host"),
+        Phase::Chat => (" Message ", "type a message and press Enter"),
+    };
+    let show_placeholder = app.input.is_empty() && app.phase != Phase::Chat;
+    let body = if show_placeholder {
+        Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                placeholder,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("> ", Style::default().fg(Color::Cyan)),
+            Span::styled(app.input.clone(), Style::default().fg(Color::White)),
+        ])
+    };
+    let input = Paragraph::new(body).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(Span::styled(title, Style::default().fg(Color::Cyan))),
+    );
+    f.render_widget(input, chunks[2]);
+
+    // Cursor inside the input box.
+    let area = chunks[2];
+    let cursor_x = (area.x + 3).saturating_add(app.input.chars().count() as u16);
+    let cursor_x = cursor_x.min(area.x + area.width.saturating_sub(2));
+    f.set_cursor(cursor_x, area.y + 1);
+}
+
+fn init_terminal() -> AppResult<Terminal<CrosstermBackend<io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn spawn_input_thread() -> mpsc::UnboundedReceiver<Event> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    std::thread::spawn(move || loop {
+        if event::poll(Duration::from_millis(100)).unwrap_or(false) {
+            if let Ok(ev) = event::read() {
+                if tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+async fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    mut writer: tokio::net::tcp::OwnedWriteHalf,
+    mut server_rx: mpsc::UnboundedReceiver<String>,
+    mut key_rx: mpsc::UnboundedReceiver<Event>,
+) -> AppResult<()> {
+    let mut ticker = tokio::time::interval(Duration::from_millis(200));
+    loop {
+        terminal.draw(|f| ui(f, app))?;
+
+        tokio::select! {
+            maybe_line = server_rx.recv() => {
+                match maybe_line {
+                    Some(line) => {
+                        app.push_server_line(&line);
+                        if app.should_quit {
+                            break;
+                        }
+                    }
+                    None => {
+                        app.connected = false;
+                        break;
+                    }
+                }
+            }
+            maybe_event = key_rx.recv() => {
+                match maybe_event {
+                    Some(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                        match app.handle_key(key) {
+                            Action::Quit => break,
+                            Action::Send(data) => {
+                                writer.write_all(data.as_bytes()).await?;
+                            }
+                            Action::None => {}
+                        }
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            _ = ticker.tick() => {}
+        }
+    }
+    Ok(())
+}
+
+/// Split `<tc-address>[:remote_port]`. A bare tc address defaults to port 8080.
+fn split_tc(s: &str) -> (String, u16) {
+    if let Some(idx) = s.rfind(':') {
+        if let Ok(port) = s[idx + 1..].parse::<u16>() {
+            let tc = &s[..idx];
+            if tc.starts_with("tc") {
+                return (tc.to_string(), port);
+            }
+        }
+    }
+    (s.to_string(), 8080)
+}
+
+/// Find a free localhost port to expose the tailcat forward on.
+fn pick_local_port() -> u16 {
+    for port in 18080..18100u16 {
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    18080
+}
+
+/// Spawn `tailcat forward` in the background. It is killed when the guard drops.
+fn start_forward(tc: &str, local: u16, remote: u16) -> AppResult<tokio::process::Child> {
+    let mut child = Command::new("tailcat")
+        .arg("forward")
+        .arg(tc)
+        .arg(format!("{local}:{remote}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("failed to start tailcat forward: {e} — install with `brew install tailcat`"))?;
+
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(_)) = lines.next_line().await {}
+        });
+    }
+    Ok(child)
+}
+
+/// Poll the local forward until it accepts connections.
+async fn wait_for_forward(port: u16) -> AppResult<()> {
+    for _ in 0..100 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Err("timed out waiting for tailcat forward to become ready".into())
+}
+
+#[tokio::main]
+async fn main() -> AppResult<()> {
+    // First CLI arg (or CHAT_SERVER):
+    //   - `tc...` tailcat address (optionally `:remote_port`) -> auto-run tailcat forward
+    //   - `host:port` -> connect directly
+    //   - nothing -> 127.0.0.1:8080
+    let raw = std::env::args()
+        .nth(1)
+        .or_else(|| std::env::var("CHAT_SERVER").ok())
+        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
+
+    // Keep the tailcat child alive for the lifetime of the client.
+    let (address, _tailcat_guard) = if raw.starts_with("tc") {
+        let (tc, remote_port) = split_tc(&raw);
+        if tc.len() >= 24 {
+            let local_port = pick_local_port();
+            eprintln!(
+                "🌐 tailcat: forwarding to 127.0.0.1:{local_port} (remote port {remote_port})…"
+            );
+            let guard = start_forward(&tc, local_port, remote_port)?;
+            wait_for_forward(local_port).await?;
+            (
+                format!("127.0.0.1:{local_port}"),
+                Some(guard),
+            )
+        } else {
+            (raw, None)
+        }
+    } else {
+        (raw, None)
+    };
+
+    let stream = TcpStream::connect(&address).await?;
+    let (reader, writer) = stream.into_split();
+
+    // Read incoming server lines into a channel consumed by the UI loop.
+    let (line_tx, line_rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(reader);
+        let mut buffer = String::new();
+        loop {
+            buffer.clear();
+            match reader.read_line(&mut buffer).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if line_tx.send(buffer.clone()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let key_rx = spawn_input_thread();
+
+    // Restore the terminal even if a panic unwinds out of the UI loop.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        default_hook(info);
+    }));
+
+    let mut terminal = init_terminal()?;
+    let mut app = App::new(address);
+
+    let result = run_app(&mut terminal, &mut app, writer, line_rx, key_rx).await;
+
+    restore_terminal(&mut terminal)?;
+
+    if let Err(e) = result {
+        eprintln!("Error: {e}");
+    }
+    if let Some(reason) = &app.auth_error {
+        eprintln!("Join failed: {reason}");
+    } else if !app.connected {
+        println!("Disconnected from server.");
+    } else {
+        println!("Goodbye 👋");
+    }
+    Ok(())
+}

@@ -1,0 +1,10 @@
+[package]
+name = "vanish-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+ratatui = "0.26"
+crossterm = "0.27"
+chrono = "0.4"

@@ -1,0 +1,21 @@
+# Build output
+/target/
+**/target/
+
+# Agent / AI working docs — never committed
+docs/superpowers/
+.opencode/
+.agents/
+.superpowers/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursor/
+.cursorrules
+**/*.agent.md
+
+# OS / editor noise
+.DS_Store
+*.log
+.idea/
+.vscode/
