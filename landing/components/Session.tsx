@@ -48,7 +48,7 @@ function classify(raw: string): Line {
     };
   }
 
-  if (line.trimStart().startsWith("* ***")) {
+  if (line.trimStart().startsWith("***")) {
     return { kind: "event", content: <span className="term__muted">{line}</span> };
   }
 

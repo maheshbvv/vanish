@@ -63,13 +63,13 @@ export default function Page() {
           <div className="container hero__inner">
             <div className="hero__copy">
               <h1>The room closes when the host quits.</h1>
-              <p className="lead">A terminal chat in Rust, one key per boot.</p>
-              <Install command={COMMAND} note="Then run vanish." />
+              <p className="lead">Terminal chat in Rust, one key per boot.</p>
+              <Install command={COMMAND} note="Run vanish." />
             </div>
             <Session
               lines={hostHero}
               label="The Vanish host window after kicking a guest, showing the rotated join key"
-              caption="Before TWJZ-PMZ2, after RJ4G-1H0M."
+              caption="Before GDNW-ZGGV, after K4YV-7QT2."
             />
           </div>
         </section>
