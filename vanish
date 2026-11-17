@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Vanish launcher: builds quietly with an in-place spinner (like a page
+# loader), then starts the server, which opens the host client in this
+# same terminal.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+log="$(mktemp -t vanish-build.XXXXXX)"
+trap 'rm -f "$log"' EXIT
+
+cargo build -p vanish-server -p vanish-client --quiet >"$log" 2>&1 &
+pid=$!
+
+if [ -t 2 ]; then
+  frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+  i=0
+  printf '\033[?25l' >&2 # hide cursor
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r\033[2K%s building Vanish…' "${frames[$((i % ${#frames[@]}))]}" >&2
+    i=$((i + 1))
+    sleep 0.08
+  done
+  printf '\r\033[2K' >&2
+  printf '\033[?25h' >&2 # restore cursor
+fi
+
+if ! wait "$pid"; then
+  cat "$log" >&2
+  exit 1
+fi
+
+exec ./target/debug/vanish-server "$@"

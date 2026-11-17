@@ -18,11 +18,17 @@ no accounts, no database, no inbound ports.
 
 ## Features
 
+- **One command to start.** Running the server opens a local client in the same
+  terminal — type a username and you are chatting. When the host quits, the server
+  (and the room) shuts down. The guest invite is copied to the clipboard automatically
+  when `pbcopy`, `wl-copy`, `xclip`, or `xsel` is available.
+- **Quiet, browser-like startup.** Build output is replaced by a single in-place
+  spinner instead of a wall of `Compiling ...` lines.
 - **Join key per boot.** The server prints a random key at startup. Guests cannot
   join without it. Restart the server and the old key is dead — nothing is persisted.
 - **Polished TUI.** Fixed input box, timestamps, per-user colors, own messages
   highlighted, join/leave events dimmed, and instant local echo of what you send.
-- **tailcat on autopilot.** `cargo run` starts tailcat in the background and prints a
+- **tailcat on autopilot.** The server starts tailcat in the background and prints a
   single paste-able command for guests. The client auto-establishes the tunnel.
 - **Tiny and dependency-light.** Tokio TCP server; ratatui/crossterm client.
 
@@ -33,6 +39,8 @@ no accounts, no database, no inbound ports.
   [rustup](https://rustup.rs) (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`).
 - Optional: [tailcat](https://github.com/tailscale/tailcat) for chatting across machines
   (`brew install tailcat`). Without it Vanish still runs on localhost.
+- Optional: a clipboard tool to auto-copy the guest invite — `wl-copy` (Wayland),
+  `xclip`, or `xsel` on Linux; `pbcopy` ships with macOS.
 
 ## Build
 
@@ -45,22 +53,40 @@ This is a Cargo workspace and builds both binaries:
 
 ## Quick start (same machine)
 
-Terminal 1 — server:
+One command starts the server **and** the host's client in this terminal:
 
 ```bash
-cargo run -p vanish-server
-# 🚀 Vanish server listening on 127.0.0.1:8080
-# 🔑 Join key (this run only): V9FB-6NCH   expires when this server stops
+./vanish
+# (equivalently: cargo run -p vanish-server)
 ```
 
-Terminal 2 and 3 — clients:
+On first run you see a spinner while it builds, then the join key, then the chat
+client opens by itself. Type a **username** and you are in — the host never types
+the join key.
+
+When the host quits (`Ctrl+C` in the chat), the server stops and the room ends.
+
+The invite for guests is printed at startup, copied to the clipboard when a clipboard
+tool exists, and shown at the top of the host's chat window — so you can share it
+without leaving the chat.
+
+Guests on the same machine open their own terminal:
 
 ```bash
 cargo run -p vanish-client
 ```
 
-Each client asks for a **username** and the **join key**, then drops you into the chat.
-Open more terminals for more people; usernames must be unique while connected.
+Guests type a **username** and the **join key** printed at startup. Open more
+terminals for more people; usernames must be unique while connected.
+
+To run the server without opening a local client (headless, for `systemd`, a
+server box, or scripted tests):
+
+```bash
+CHAT_HOST=0 cargo run -p vanish-server
+```
+
+Host mode is also skipped automatically when stdin is not a terminal.
 
 ## Chatting across machines (tailcat, automatic)
 
@@ -69,7 +95,7 @@ The server starts tailcat for you and prints a ready-to-share line:
 ```bash
 cargo run -p vanish-server
 # 🌐 tailcat address: tcomFwWCCcjS5nKNqAod034nWoJZW0LZq
-# 👉 Guests connect with:  cargo run -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
+# 👉 Guests connect with:  cargo run -p vanish-client -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
 ```
 
 A guest pastes that command:
@@ -101,6 +127,7 @@ Server:
 | Setting | How | Default |
 |---|---|---|
 | Bind address | CLI arg, or `CHAT_BIND` | `127.0.0.1:8080` |
+| Local host client | `CHAT_HOST=0` to disable (skipped when stdin is not a TTY) | on |
 | Join key | `CHAT_KEY` env (pins it — dev only) | random 8 chars per boot |
 | tailcat | `CHAT_TAILCAT=0` to disable | auto-start |
 
@@ -131,6 +158,11 @@ The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equival
   then a join key (3 tries), then sends `AUTH_OK` and registers the client. Every chat
   line is broadcast to all connected clients as `[username] message`; system events are
   sent as `📢 ...` lines. Duplicate usernames are rejected.
+- **Host mode**: when stdin is a terminal (and `CHAT_HOST` is not `0`), the server
+  launches the sibling `vanish-client` binary on `127.0.0.1:<port>` with inherited
+  stdio and the join key in `VANISH_KEY`. The client auto-submits the key, suppressing
+  the join-key prompt. When that client exits, the server shuts down and cleans up
+  tailcat. Server chat logs are suppressed in host mode so they cannot corrupt the TUI.
 - **Client** (`client/`): a ratatui TUI driven by a Tokio event loop. It renders its own
   message immediately on send and skips the server's echo of it, so the chat feels
   instant and never double-prints. A background thread feeds keyboard events; a reader
@@ -150,9 +182,11 @@ The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equival
 ## Project layout
 
 ```
-Cargo.toml        workspace root
-server/           vanish-server: Tokio TCP chat server
-client/           vanish-client: ratatui terminal client
+Cargo.toml            workspace root
+vanish                launcher: quiet spinner build, then server + host client
+.cargo/config.toml    quiet cargo output
+server/               vanish-server: Tokio TCP chat server
+client/               vanish-client: ratatui terminal client
 ```
 
 ## Tests

@@ -33,6 +33,8 @@ enum MsgKind {
     Chat,
     Me,
     System,
+    /// Host-mode invite line (tailcat address guests should paste).
+    Invite,
 }
 
 struct ChatMessage {
@@ -52,6 +54,8 @@ struct App {
     connected: bool,
     /// Messages we rendered locally and are still waiting to see echoed by the server.
     pending_self: VecDeque<String>,
+    /// Join key injected by the server when it launches the local client (host mode).
+    auto_key: Option<String>,
     auth_error: Option<String>,
     should_quit: bool,
 }
@@ -64,15 +68,35 @@ enum Action {
 
 impl App {
     fn new(address: String) -> Self {
+        let mut messages = Vec::new();
+        if let Some(invite) = std::env::var("VANISH_INVITE")
+            .ok()
+            .filter(|s| !s.is_empty())
+        {
+            let copied = std::env::var("VANISH_INVITE_COPIED").is_ok();
+            messages.push(ChatMessage {
+                time: String::new(),
+                sender: String::new(),
+                content: if copied {
+                    "invite copied to clipboard — paste it to your guest".to_string()
+                } else {
+                    format!("guests run: {invite}")
+                },
+                kind: MsgKind::Invite,
+            });
+        }
         Self {
             address,
             phase: Phase::Login,
             input: String::new(),
             username: String::new(),
-            messages: Vec::new(),
+            messages,
             list_state: ListState::default(),
             connected: true,
             pending_self: VecDeque::new(),
+            auto_key: std::env::var("VANISH_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty()),
             auth_error: None,
             should_quit: false,
         }
@@ -101,8 +125,13 @@ impl App {
                     Phase::Login => {
                         self.username = text.clone();
                         self.phase = Phase::Key;
-                        Action::Send(format!("{text}\n"))
+                        match &self.auto_key {
+                            // Host mode: the server already handed us the key.
+                            Some(key) => Action::Send(format!("{text}\n{key}\n")),
+                            None => Action::Send(format!("{text}\n")),
+                        }
                     }
+                    Phase::Key if self.auto_key.is_some() => Action::None,
                     Phase::Key => Action::Send(format!("{text}\n")),
                     Phase::Chat => {
                         self.push_local_message(text.clone());
@@ -226,6 +255,15 @@ fn message_line(msg: &ChatMessage) -> Line<'static> {
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
         )),
+        MsgKind::Invite => Line::from(vec![
+            Span::styled("  🔗 ", Style::default().fg(Color::Green)),
+            Span::styled(
+                msg.content.clone(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
         MsgKind::Me => Line::from(vec![
             Span::styled(format!("{} ", msg.time), Style::default().fg(Color::DarkGray)),
             Span::styled(
@@ -264,6 +302,17 @@ fn ui(f: &mut Frame, app: &mut App) {
         Phase::Login => Line::from(vec![
             Span::styled("○ connecting  ", Style::default().fg(Color::Yellow)),
             Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
+        ]),
+        Phase::Key if app.auto_key.is_some() => Line::from(vec![
+            Span::styled("🔑 signing in  ", Style::default().fg(Color::Yellow)),
+            Span::styled(app.address.clone(), Style::default().fg(Color::Gray)),
+            Span::styled("  ·  user: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.username.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Phase::Key => Line::from(vec![
             Span::styled("🔑 join key required  ", Style::default().fg(Color::Yellow)),
@@ -317,6 +366,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Input
     let (title, placeholder) = match app.phase {
         Phase::Login => (" Username ", "type a username and press Enter"),
+        Phase::Key if app.auto_key.is_some() => (" Signing in ", "authenticating with the host's key…"),
         Phase::Key => (" Join key ", "paste the join key printed by the server host"),
         Phase::Chat => (" Message ", "type a message and press Enter"),
     };

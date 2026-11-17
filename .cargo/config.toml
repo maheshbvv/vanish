@@ -1,0 +1,4 @@
+# Keep `cargo run -p vanish-server` from flooding the terminal with
+# "Compiling ..." lines before the TUI opens.
+[term]
+quiet = true

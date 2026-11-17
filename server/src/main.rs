@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,13 +40,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start tailcat in the background unless disabled with CHAT_TAILCAT=0.
     let mut tailcat: Option<Child> = None;
+    let mut share: Option<String> = None;
     if std::env::var("CHAT_TAILCAT").ok().as_deref() != Some("0") {
         println!("⏳ starting tailcat…");
         match start_tailcat(port).await {
             Ok((child, tc_addr)) => {
                 println!("🌐 tailcat address: {tc_addr}");
-                println!("👉 Guests connect with:  cargo run -- {tc_addr}:{port}");
+                println!("👉 Guests connect with:  cargo run -p vanish-client -- {tc_addr}:{port}");
                 println!("   (tailcat runs in the background; it stops with this server)");
+                share = Some(format!("{tc_addr}:{port}"));
                 tailcat = Some(child);
             }
             Err(e) => {
@@ -56,7 +58,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Host mode: open a local client in this terminal. When it exits, the
+    // server shuts down too, so the chat ends with the host.
+    // Disable with CHAT_HOST=0; skipped automatically when stdin isn't a TTY.
+    let host_mode = std::env::var("CHAT_HOST").ok().as_deref() != Some("0")
+        && std::io::stdin().is_terminal();
+
+    // The TUI clears the screen, so also hand the guest command to the client.
+    // Copy it to the clipboard when a clipboard tool is available.
+    let invite = share
+        .as_ref()
+        .map(|addr| format!("cargo run -p vanish-client -- {addr}"));
+    let invite_copied = invite.as_deref().map(copy_to_clipboard).unwrap_or(false);
+    if invite_copied {
+        println!("📋 guest command copied to your clipboard");
+    }
+
+    let (host_tx, mut host_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let mut hosting = false;
+    if host_mode {
+        match spawn_local_client(port, &key, invite.as_deref(), invite_copied) {
+            Ok(mut child) => {
+                hosting = true;
+                let tx = host_tx.clone();
+                tokio::spawn(async move {
+                    let _ = child.wait().await;
+                    let _ = tx.send(()).await;
+                });
+            }
+            Err(e) => {
+                eprintln!("⚠ could not start local client ({e}). Running headless.");
+            }
+        }
+    }
+    drop(host_tx);
+
     let clients: ClientMap = Arc::new(Mutex::new(HashMap::new()));
+    let quiet_logs = hosting;
 
     loop {
         tokio::select! {
@@ -67,12 +105,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("👋 shutting down");
                 break;
             }
+            _ = host_rx.recv(), if hosting => {
+                println!("👋 host left the chat — shutting down");
+                if let Some(mut child) = tailcat.take() {
+                    let _ = child.kill().await;
+                }
+                break;
+            }
             accepted = listener.accept() => {
                 let (stream, _addr) = accepted?;
                 let clients = Arc::clone(&clients);
                 let key = Arc::clone(&key);
                 tokio::spawn(async move {
-                    handle_client(stream, clients, key).await;
+                    handle_client(stream, clients, key, quiet_logs).await;
                 });
             }
         }
@@ -83,6 +128,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn port_of(address: &str) -> Option<u16> {
     address.rsplit(':').next()?.parse().ok()
+}
+
+/// Launch the local client attached to this terminal. Prefers the sibling
+/// `vanish-client` binary, building it quietly on first use if needed.
+fn spawn_local_client(
+    port: u16,
+    key: &str,
+    invite: Option<&str>,
+    invite_copied: bool,
+) -> Result<Child, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| "cannot locate executable directory".to_string())?
+        .to_path_buf();
+    let bin = if cfg!(windows) {
+        dir.join("vanish-client.exe")
+    } else {
+        dir.join("vanish-client")
+    };
+
+    if !bin.exists() {
+        let root = dir.parent().and_then(|target| target.parent());
+        if let Some(root) = root {
+            eprintln!("… building vanish-client (first run)");
+            let status = std::process::Command::new("cargo")
+                .args(["build", "-q", "-p", "vanish-client"])
+                .current_dir(root)
+                .status()
+                .map_err(|e| format!("could not run cargo: {e}"))?;
+            if !status.success() {
+                return Err("building vanish-client failed".to_string());
+            }
+        }
+    }
+    if !bin.exists() {
+        return Err("vanish-client binary not found".to_string());
+    }
+
+    let mut cmd = Command::new(&bin);
+    cmd.arg(format!("127.0.0.1:{port}"))
+        .env("VANISH_KEY", key)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    if let Some(invite) = invite {
+        cmd.env("VANISH_INVITE", invite);
+    }
+    if invite_copied {
+        cmd.env("VANISH_INVITE_COPIED", "1");
+    }
+    cmd.spawn().map_err(|e| format!("could not launch client: {e}"))
+}
+
+/// Best-effort clipboard copy. Linux needs wl-copy, xclip, or xsel installed.
+fn copy_to_clipboard(text: &str) -> bool {
+    let candidates: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else {
+        &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    };
+    for (program, args) in candidates {
+        let mut child = match std::process::Command::new(program)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => continue,
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if child.wait().map(|status| status.success()).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
 }
 
 fn extract_tc(line: &str) -> Option<String> {
@@ -131,7 +262,7 @@ async fn start_tailcat(port: u16) -> Result<(Child, String), String> {
     }
 }
 
-async fn handle_client(stream: TcpStream, clients: ClientMap, key: Arc<String>) {
+async fn handle_client(stream: TcpStream, clients: ClientMap, key: Arc<String>, quiet: bool) {
     let (raw_reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(raw_reader);
     let mut line = String::new();
@@ -188,7 +319,9 @@ async fn handle_client(stream: TcpStream, clients: ClientMap, key: Arc<String>) 
         clients_lock.insert(username.clone(), tx);
     }
 
-    println!("🟢 {} connected.", username);
+    if !quiet {
+        println!("🟢 {} connected.", username);
+    }
     broadcast(
         &clients,
         &format!("📢 *** {} joined the chat ***\n", username),
@@ -225,7 +358,9 @@ async fn handle_client(stream: TcpStream, clients: ClientMap, key: Arc<String>) 
         clients_lock.remove(&username);
     }
     write_task.abort();
-    println!("🔴 {} disconnected.", username);
+    if !quiet {
+        println!("🔴 {} disconnected.", username);
+    }
     broadcast(&clients, &format!("📢 *** {} left the chat ***\n", username)).await;
 }
 
@@ -323,7 +458,10 @@ mod tests {
 
     #[test]
     fn ignores_lines_without_address() {
-        assert_eq!(extract_tc("# Selected bootstrap relay region 302, San Francisco"), None);
+        assert_eq!(
+            extract_tc("# Selected bootstrap relay region 302, San Francisco"),
+            None
+        );
         assert_eq!(extract_tc("tcSHORT"), None);
     }
 
