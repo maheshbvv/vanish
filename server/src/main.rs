@@ -93,6 +93,18 @@ fn failure_delay(failures: u32) -> Duration {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `--version` / `-V` before anything else, so it prints plainly.
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("vanish-server {}", env!("CARGO_PKG_VERSION"));
+        if let Some(sha) = option_env!("VANISH_GIT_SHA") {
+            println!("commit {sha}");
+        }
+        return Ok(());
+    }
+
     // Bind address: first CLI arg, CHAT_BIND env var, or localhost default.
     // Keep this on 127.0.0.1 when tailcat fronts the server.
     let address = std::env::args()
@@ -133,7 +145,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 println!("⚠ tailcat not started ({e}). Running local-only.");
-                println!("   install with: brew install tailcat   (or set CHAT_TAILCAT=0 to silence)");
+                println!(
+                    "   install with: brew install tailcat   (or set CHAT_TAILCAT=0 to silence)"
+                );
             }
         }
     }
@@ -141,8 +155,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Host mode: open a local client in this terminal. When it exits, the
     // server shuts down too, so the chat ends with the host.
     // Disable with CHAT_HOST=0; skipped automatically when stdin isn't a TTY.
-    let host_mode = std::env::var("CHAT_HOST").ok().as_deref() != Some("0")
-        && std::io::stdin().is_terminal();
+    let host_mode =
+        std::env::var("CHAT_HOST").ok().as_deref() != Some("0") && std::io::stdin().is_terminal();
 
     // The TUI clears the screen, so hand the join key (plus the guest command
     // when tailcat is active) to the client. Copy the full invite to the
@@ -287,7 +301,8 @@ fn spawn_local_client(
     if invite_copied {
         cmd.env("VANISH_INVITE_COPIED", "1");
     }
-    cmd.spawn().map_err(|e| format!("could not launch client: {e}"))
+    cmd.spawn()
+        .map_err(|e| format!("could not launch client: {e}"))
 }
 
 /// Best-effort clipboard copy. Linux needs wl-copy, xclip, or xsel installed.
@@ -325,9 +340,7 @@ fn copy_to_clipboard(text: &str) -> bool {
 
 fn extract_tc(line: &str) -> Option<String> {
     line.split_whitespace()
-        .map(|t| {
-            t.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        })
+        .map(|t| t.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')))
         .find(|t| t.starts_with("tc") && t.len() >= 24)
         .map(|t| t.to_string())
 }
@@ -414,11 +427,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr, id: u64, hub: Arc<Hu
                     authed = true;
                     break;
                 }
-                let failures = hub
-                    .limiter
-                    .lock()
-                    .await
-                    .record_failure(ip, Instant::now());
+                let failures = hub.limiter.lock().await.record_failure(ip, Instant::now());
                 tokio::time::sleep(failure_delay(failures)).await;
                 if attempt == 2 {
                     let _ = writer.write_all(b"AUTH_FAIL wrong join key\n").await;
@@ -464,11 +473,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr, id: u64, hub: Arc<Hu
     if !hub.quiet {
         println!("🟢 {} connected.", username);
     }
-    broadcast(
-        &hub,
-        &format!("📢 *** {} joined the chat ***\n", username),
-    )
-    .await;
+    broadcast(&hub, &format!("📢 *** {} joined the chat ***\n", username)).await;
 
     // 5. Writer task: channel -> TCP stream. `Close` ends the connection.
     let write_task = tokio::spawn(async move {
@@ -547,12 +552,7 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr, id: u64, hub: Arc<Hu
 
 /// Disconnect a guest and rotate the join key so the old invite cannot be
 /// reused. Only reachable from a connection that proved the host token.
-async fn handle_kick(
-    hub: &Hub,
-    host: &str,
-    target: &str,
-    host_tx: &mpsc::UnboundedSender<Out>,
-) {
+async fn handle_kick(hub: &Hub, host: &str, target: &str, host_tx: &mpsc::UnboundedSender<Out>) {
     if target.is_empty() {
         let _ = host_tx.send(Out::Text("usage: /kick <username>\n".to_string()));
         return;
@@ -568,7 +568,9 @@ async fn handle_kick(
         return;
     };
 
-    let _ = entry.tx.send(Out::Text("KICKED removed by the host\n".to_string()));
+    let _ = entry
+        .tx
+        .send(Out::Text("KICKED removed by the host\n".to_string()));
     let _ = entry.tx.send(Out::Close);
     if let Some(kick) = entry.kick {
         let _ = kick.send(());
@@ -595,7 +597,10 @@ async fn handle_kick(
     }
 }
 
-async fn read_line_trim(reader: &mut BufReader<OwnedReadHalf>, line: &mut String) -> Option<String> {
+async fn read_line_trim(
+    reader: &mut BufReader<OwnedReadHalf>,
+    line: &mut String,
+) -> Option<String> {
     line.clear();
     match reader.read_line(line).await {
         Ok(0) | Err(_) => None,

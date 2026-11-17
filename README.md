@@ -37,7 +37,31 @@ no accounts, no database, no inbound ports.
   single paste-able command for guests. The client auto-establishes the tunnel.
 - **Tiny and dependency-light.** Tokio TCP server; ratatui/crossterm client.
 
+## Install
+
+macOS (arm64, x86_64) and Linux (x86_64, arm64), prebuilt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/install.sh | sh
+```
+
+It downloads the release for your machine, checks its sha256, and puts
+`vanish`, `vanish-server` and `vanish-client` in `~/.local/bin`
+(override with `VANISH_INSTALL_DIR`; pin with `VANISH_VERSION=v0.1.0`).
+
+```bash
+vanish                       # start a room, as the host
+vanish-client <address>      # join someone else's room
+```
+
+Prefer the source? Skip to [Build](#build).
+
 ## Requirements
+
+When you install the release, only a terminal is needed — the binaries are
+statically linked on Linux and need no Rust toolchain.
+
+Building from source needs:
 
 - Rust 1.75+ (both crates use edition 2021). If your distro ships an older
   toolchain, install current stable with

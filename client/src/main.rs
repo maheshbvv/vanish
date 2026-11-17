@@ -88,7 +88,9 @@ impl App {
             auto_key: std::env::var("VANISH_KEY")
                 .ok()
                 .filter(|k| !k.trim().is_empty()),
-            invite_cmd: std::env::var("VANISH_INVITE").ok().filter(|s| !s.is_empty()),
+            invite_cmd: std::env::var("VANISH_INVITE")
+                .ok()
+                .filter(|s| !s.is_empty()),
             invite_key: std::env::var("VANISH_INVITE_KEY")
                 .ok()
                 .filter(|s| !s.is_empty()),
@@ -332,7 +334,10 @@ fn message_line(msg: &ChatMessage) -> Line<'static> {
             ),
         ]),
         MsgKind::Me => Line::from(vec![
-            Span::styled(format!("{} ", msg.time), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{} ", msg.time),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(
                 format!("{:<8}", msg.sender),
                 Style::default()
@@ -342,7 +347,10 @@ fn message_line(msg: &ChatMessage) -> Line<'static> {
             Span::styled(msg.content.clone(), Style::default().fg(Color::White)),
         ]),
         MsgKind::Chat => Line::from(vec![
-            Span::styled(format!("{} ", msg.time), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{} ", msg.time),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(
                 format!("{:<8}", msg.sender),
                 Style::default()
@@ -433,8 +441,13 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Input
     let (title, placeholder) = match app.phase {
         Phase::Login => (" Username ", "type a username and press Enter"),
-        Phase::Key if app.auto_key.is_some() => (" Signing in ", "authenticating with the host's key…"),
-        Phase::Key => (" Join key ", "paste the join key printed by the server host"),
+        Phase::Key if app.auto_key.is_some() => {
+            (" Signing in ", "authenticating with the host's key…")
+        }
+        Phase::Key => (
+            " Join key ",
+            "paste the join key printed by the server host",
+        ),
         Phase::Chat => (" Message ", "type a message and press Enter"),
     };
     let show_placeholder = app.input.is_empty() && app.phase != Phase::Chat;
@@ -581,7 +594,9 @@ fn start_forward(tc: &str, local: u16, remote: u16) -> AppResult<tokio::process:
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("failed to start tailcat forward: {e} — install with `brew install tailcat`"))?;
+        .map_err(|e| {
+            format!("failed to start tailcat forward: {e} — install with `brew install tailcat`")
+        })?;
 
     if let Some(stderr) = child.stderr.take() {
         tokio::spawn(async move {
@@ -608,6 +623,18 @@ async fn wait_for_forward(port: u16) -> AppResult<()> {
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
+    // `--version` / `-V` before the address is parsed, so it prints plainly.
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("vanish-client {}", env!("CARGO_PKG_VERSION"));
+        if let Some(sha) = option_env!("VANISH_GIT_SHA") {
+            println!("commit {sha}");
+        }
+        return Ok(());
+    }
+
     // First CLI arg (or CHAT_SERVER):
     //   - `tc...` tailcat address (optionally `:remote_port`) -> auto-run tailcat forward
     //   - `host:port` -> connect directly
@@ -627,10 +654,7 @@ async fn main() -> AppResult<()> {
             );
             let guard = start_forward(&tc, local_port, remote_port)?;
             wait_for_forward(local_port).await?;
-            (
-                format!("127.0.0.1:{local_port}"),
-                Some(guard),
-            )
+            (format!("127.0.0.1:{local_port}"), Some(guard))
         } else {
             (raw, None)
         }

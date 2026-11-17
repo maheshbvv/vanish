@@ -1,7 +1,10 @@
 [package]
 name = "vanish-client"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal client for Vanish, a self-hosted chat that dies with the room."
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

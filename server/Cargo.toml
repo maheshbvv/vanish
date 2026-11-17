@@ -1,7 +1,10 @@
 [package]
 name = "vanish-server"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Self-hosted terminal chat: one join key per boot, no accounts, no database."
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

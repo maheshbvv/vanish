@@ -1,0 +1,27 @@
+[
+ {
+  "shape": "Workbench",
+  "theme": "terminal",
+  "axes": "dark/mono/chromatic-green",
+  "hero": "Corridor",
+  "nav": "masthead",
+  "footer": "colophon block",
+  "imagery": "screenshots 3 (real terminal captures of the server and client)",
+  "photos": [],
+  "entry": "vanish-landing",
+  "fingerprint": "Centred display|Single column|Hairline|Outlined|None|None",
+  "sections": [
+   "Hero (host window after a kick)",
+   "Needs table",
+   "Switcher (guest, kicked guest)",
+   "Diff",
+   "How the key holds (rows)",
+   "Close band"
+  ],
+  "signature": "the join key rotating after /kick bob, shown in a real capture",
+  "waived": [],
+  "prompt": "Hallmark landing page for Vanish, a self-hosted Rust terminal chat, in Next.js; job: copy the install command",
+  "date": "2026-11-17",
+  "mode": "build"
+ }
+]
