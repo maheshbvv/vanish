@@ -64,20 +64,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host_mode = std::env::var("CHAT_HOST").ok().as_deref() != Some("0")
         && std::io::stdin().is_terminal();
 
-    // The TUI clears the screen, so also hand the guest command to the client.
-    // Copy it to the clipboard when a clipboard tool is available.
+    // The TUI clears the screen, so hand the join key (plus the guest command
+    // when tailcat is active) to the client. Copy the full invite to the
+    // clipboard when a clipboard tool is available.
+    let invite_key = display_key(&key);
     let invite = share
         .as_ref()
         .map(|addr| format!("cargo run -p vanish-client -- {addr}"));
-    let invite_copied = invite.as_deref().map(copy_to_clipboard).unwrap_or(false);
+    let invite_copied = invite
+        .as_ref()
+        .map(|cmd| {
+            copy_to_clipboard(&format!(
+                "Join my Vanish chat:\n{cmd}\nJoin key: {invite_key}"
+            ))
+        })
+        .unwrap_or(false);
     if invite_copied {
-        println!("📋 guest command copied to your clipboard");
+        println!("📋 invite + join key copied to your clipboard");
     }
 
     let (host_tx, mut host_rx) = tokio::sync::mpsc::channel::<()>(1);
     let mut hosting = false;
     if host_mode {
-        match spawn_local_client(port, &key, invite.as_deref(), invite_copied) {
+        match spawn_local_client(port, &key, invite.as_deref(), &invite_key, invite_copied) {
             Ok(mut child) => {
                 hosting = true;
                 let tx = host_tx.clone();
@@ -136,6 +145,7 @@ fn spawn_local_client(
     port: u16,
     key: &str,
     invite: Option<&str>,
+    invite_key: &str,
     invite_copied: bool,
 ) -> Result<Child, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -177,6 +187,7 @@ fn spawn_local_client(
     if let Some(invite) = invite {
         cmd.env("VANISH_INVITE", invite);
     }
+    cmd.env("VANISH_INVITE_KEY", invite_key);
     if invite_copied {
         cmd.env("VANISH_INVITE_COPIED", "1");
     }

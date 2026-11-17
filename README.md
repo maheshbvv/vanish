@@ -20,8 +20,8 @@ no accounts, no database, no inbound ports.
 
 - **One command to start.** Running the server opens a local client in the same
   terminal — type a username and you are chatting. When the host quits, the server
-  (and the room) shuts down. The guest invite is copied to the clipboard automatically
-  when `pbcopy`, `wl-copy`, `xclip`, or `xsel` is available.
+  (and the room) shuts down. The full invite (guest command + join key) is copied to the
+  clipboard automatically when `pbcopy`, `wl-copy`, `xclip`, or `xsel` is available.
 - **Quiet, browser-like startup.** Build output is replaced by a single in-place
   spinner instead of a wall of `Compiling ...` lines.
 - **Join key per boot.** The server prints a random key at startup. Guests cannot
@@ -66,9 +66,9 @@ the join key.
 
 When the host quits (`Ctrl+C` in the chat), the server stops and the room ends.
 
-The invite for guests is printed at startup, copied to the clipboard when a clipboard
-tool exists, and shown at the top of the host's chat window — so you can share it
-without leaving the chat.
+The invite for guests — guest command **and** join key — is printed at startup, copied
+to the clipboard when a clipboard tool exists, and shown at the top of the host's chat
+window, so you can share it without leaving the chat.
 
 Guests on the same machine open their own terminal:
 

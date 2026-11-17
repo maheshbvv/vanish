@@ -69,19 +69,21 @@ enum Action {
 impl App {
     fn new(address: String) -> Self {
         let mut messages = Vec::new();
-        if let Some(invite) = std::env::var("VANISH_INVITE")
+        let invite_key = std::env::var("VANISH_INVITE_KEY")
             .ok()
-            .filter(|s| !s.is_empty())
-        {
+            .filter(|s| !s.is_empty());
+        let invite = std::env::var("VANISH_INVITE").ok().filter(|s| !s.is_empty());
+        if let Some(key) = invite_key {
             let copied = std::env::var("VANISH_INVITE_COPIED").is_ok();
+            let content = match (copied, invite) {
+                (true, _) => format!("join key {key} · invite + key copied to clipboard"),
+                (false, Some(cmd)) => format!("join key {key} · guests run: {cmd}"),
+                (false, None) => format!("join key {key}"),
+            };
             messages.push(ChatMessage {
                 time: String::new(),
                 sender: String::new(),
-                content: if copied {
-                    "invite copied to clipboard — paste it to your guest".to_string()
-                } else {
-                    format!("guests run: {invite}")
-                },
+                content,
                 kind: MsgKind::Invite,
             });
         }
