@@ -519,7 +519,20 @@ async fn main() -> AppResult<()> {
         (raw, None)
     };
 
-    let stream = TcpStream::connect(&address).await?;
+    let stream = match TcpStream::connect(&address).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            eprintln!("✗ Could not connect to {address} ({e}).");
+            eprintln!("  • Same machine: start `cargo run -p vanish-server` first.");
+            eprintln!(
+                "  • Another machine: use the server's LAN IP, e.g. `cargo run -p vanish-client -- 192.168.1.20:8080`"
+            );
+            eprintln!(
+                "  • tailcat: use the printed address, e.g. `cargo run -p vanish-client -- tc...:8080`"
+            );
+            std::process::exit(1);
+        }
+    };
     let (reader, writer) = stream.into_split();
 
     // Read incoming server lines into a channel consumed by the UI loop.
