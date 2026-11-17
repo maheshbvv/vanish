@@ -28,7 +28,9 @@ no accounts, no database, no inbound ports.
 
 ## Requirements
 
-- Rust 1.85+ (both crates use edition 2024).
+- Rust 1.75+ (both crates use edition 2021). If your distro ships an older
+  toolchain, install current stable with
+  [rustup](https://rustup.rs) (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`).
 - Optional: [tailcat](https://github.com/tailscale/tailcat) for chatting across machines
   (`brew install tailcat`). Without it Vanish still runs on localhost.
 
