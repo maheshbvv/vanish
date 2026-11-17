@@ -4,6 +4,8 @@ A terminal-based secret chat. Self-hosted, gated by a one-session join key, with
 optional WireGuard-encrypted tunnel ([tailcat](https://github.com/tailscale/tailcat)) —
 no accounts, no database, no inbound ports.
 
+**Explore the project at [vanish.pendura.in](https://vanish.pendura.in)**
+
 ```
 ┌ Vanish ──────────────────────────────────────┐
 │● connected  127.0.0.1:8080  ·  you: alice     │
@@ -15,6 +17,25 @@ no accounts, no database, no inbound ports.
 │> ▊                                            │
 └──────────────────────────────────────────────┘
 ```
+
+## Install
+
+macOS (arm64, x86_64) and Linux (x86_64, arm64), prebuilt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/install.sh | sh
+```
+
+It downloads the release for your machine, checks its sha256, and puts
+`vanish`, `vanish-server` and `vanish-client` in `~/.local/bin`
+(override with `VANISH_INSTALL_DIR`; pin with `VANISH_VERSION=v0.1.0`).
+
+```bash
+vanish                       # start a room, as the host
+vanish-client <address>      # join someone else's room
+```
+
+Prefer the source? See [Build](#build).
 
 ## Features
 
@@ -36,25 +57,6 @@ no accounts, no database, no inbound ports.
 - **tailcat on autopilot.** The server starts tailcat in the background and prints a
   single paste-able command for guests. The client auto-establishes the tunnel.
 - **Tiny and dependency-light.** Tokio TCP server; ratatui/crossterm client.
-
-## Install
-
-macOS (arm64, x86_64) and Linux (x86_64, arm64), prebuilt:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/install.sh | sh
-```
-
-It downloads the release for your machine, checks its sha256, and puts
-`vanish`, `vanish-server` and `vanish-client` in `~/.local/bin`
-(override with `VANISH_INSTALL_DIR`; pin with `VANISH_VERSION=v0.1.0`).
-
-```bash
-vanish                       # start a room, as the host
-vanish-client <address>      # join someone else's room
-```
-
-Prefer the source? Skip to [Build](#build).
 
 ## Requirements
 
