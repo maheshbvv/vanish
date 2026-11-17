@@ -1,16 +1,95 @@
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
+use std::net::{IpAddr, SocketAddr};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
-type ClientMap = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>;
+/// Join-key guessing policy: per source IP, across connections.
+const JOIN_WINDOW: Duration = Duration::from_secs(60);
+const MAX_JOIN_FAILURES: u32 = 5;
+const JOIN_BLOCK: Duration = Duration::from_secs(60);
+
+enum Out {
+    Text(String),
+    Close,
+}
+
+struct ClientEntry {
+    /// Unique per connection, so a kicked user's cleanup cannot remove a
+    /// reconnected client that reused the username.
+    id: u64,
+    tx: mpsc::UnboundedSender<Out>,
+    kick: Option<oneshot::Sender<()>>,
+}
+
+struct Hub {
+    clients: Mutex<HashMap<String, ClientEntry>>,
+    key: RwLock<String>,
+    /// Secret handed to the host's local client; required to kick.
+    host_token: String,
+    /// Public tailcat address, if one is running.
+    share: Option<String>,
+    limiter: Mutex<JoinLimiter>,
+    quiet: bool,
+}
+
+#[derive(Default)]
+struct JoinLimiter {
+    failures: HashMap<IpAddr, (u32, Instant)>,
+    blocked: HashMap<IpAddr, Instant>,
+}
+
+enum Admission {
+    Allowed,
+    Blocked { retry_after: Duration },
+}
+
+impl JoinLimiter {
+    fn admit(&mut self, ip: IpAddr, now: Instant) -> Admission {
+        if let Some(&until) = self.blocked.get(&ip) {
+            if now < until {
+                return Admission::Blocked {
+                    retry_after: until - now,
+                };
+            }
+            self.blocked.remove(&ip);
+        }
+        Admission::Allowed
+    }
+
+    /// Record a wrong key, returning the number of failures in the window.
+    fn record_failure(&mut self, ip: IpAddr, now: Instant) -> u32 {
+        let entry = self.failures.entry(ip).or_insert((0, now));
+        if now.saturating_duration_since(entry.1) > JOIN_WINDOW {
+            *entry = (0, now);
+        }
+        entry.0 += 1;
+        let count = entry.0;
+        if count >= MAX_JOIN_FAILURES {
+            self.blocked.insert(ip, now + JOIN_BLOCK);
+            self.failures.remove(&ip);
+        }
+        count
+    }
+
+    fn record_success(&mut self, ip: IpAddr) {
+        self.failures.remove(&ip);
+        self.blocked.remove(&ip);
+    }
+}
+
+/// Slow guessing down even before the block kicks in.
+fn failure_delay(failures: u32) -> Duration {
+    Duration::from_millis(250 * u64::from(failures.min(4)))
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,13 +102,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = port_of(&address).unwrap_or(8080);
 
     // Join key: CHAT_KEY env var, otherwise a fresh random key each boot.
-    let key = Arc::new(
-        std::env::var("CHAT_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-            .map(|k| normalize_key(&k))
-            .unwrap_or_else(generate_key),
-    );
+    let key = std::env::var("CHAT_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .map(|k| normalize_key(&k))
+        .unwrap_or_else(generate_key);
+
+    // Only the host's local client gets this, and it is required to kick.
+    let host_token = format!("{}{}", generate_key(), generate_key());
 
     let listener = TcpListener::bind(&address).await?;
     println!("🚀 Vanish server listening on {address}");
@@ -86,7 +166,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (host_tx, mut host_rx) = tokio::sync::mpsc::channel::<()>(1);
     let mut hosting = false;
     if host_mode {
-        match spawn_local_client(port, &key, invite.as_deref(), &invite_key, invite_copied) {
+        match spawn_local_client(
+            port,
+            &key,
+            &host_token,
+            invite.as_deref(),
+            &invite_key,
+            invite_copied,
+        ) {
             Ok(mut child) => {
                 hosting = true;
                 let tx = host_tx.clone();
@@ -102,8 +189,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     drop(host_tx);
 
-    let clients: ClientMap = Arc::new(Mutex::new(HashMap::new()));
-    let quiet_logs = hosting;
+    let hub = Arc::new(Hub {
+        clients: Mutex::new(HashMap::new()),
+        key: RwLock::new(key),
+        host_token,
+        share,
+        limiter: Mutex::new(JoinLimiter::default()),
+        quiet: hosting,
+    });
+    let next_id = AtomicU64::new(1);
 
     loop {
         tokio::select! {
@@ -122,11 +216,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             accepted = listener.accept() => {
-                let (stream, _addr) = accepted?;
-                let clients = Arc::clone(&clients);
-                let key = Arc::clone(&key);
+                let (stream, addr) = accepted?;
+                let hub = Arc::clone(&hub);
+                let id = next_id.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
-                    handle_client(stream, clients, key, quiet_logs).await;
+                    handle_client(stream, addr, id, hub).await;
                 });
             }
         }
@@ -144,6 +238,7 @@ fn port_of(address: &str) -> Option<u16> {
 fn spawn_local_client(
     port: u16,
     key: &str,
+    host_token: &str,
     invite: Option<&str>,
     invite_key: &str,
     invite_copied: bool,
@@ -180,6 +275,7 @@ fn spawn_local_client(
     let mut cmd = Command::new(&bin);
     cmd.arg(format!("127.0.0.1:{port}"))
         .env("VANISH_KEY", key)
+        .env("VANISH_HOST_TOKEN", host_token)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -273,42 +369,57 @@ async fn start_tailcat(port: u16) -> Result<(Child, String), String> {
     }
 }
 
-async fn handle_client(stream: TcpStream, clients: ClientMap, key: Arc<String>, quiet: bool) {
+async fn handle_client(stream: TcpStream, addr: SocketAddr, id: u64, hub: Arc<Hub>) {
+    let ip = addr.ip();
     let (raw_reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(raw_reader);
     let mut line = String::new();
+
+    // 0. Rate limit: refuse blocked sources before prompting for anything.
+    {
+        let mut limiter = hub.limiter.lock().await;
+        if let Admission::Blocked { retry_after } = limiter.admit(ip, Instant::now()) {
+            let secs = retry_after.as_secs().max(1);
+            let _ = writer
+                .write_all(
+                    format!("AUTH_FAIL too many wrong join keys — try again in {secs}s\n")
+                        .as_bytes(),
+                )
+                .await;
+            return;
+        }
+    }
 
     // 1. Username
     if writer.write_all(b"Enter your username: \n").await.is_err() {
         return;
     }
     let username = match read_line_trim(&mut reader, &mut line).await {
-        Some(u) if !u.is_empty() => u,
+        Some(u) if !u.is_empty() && u.len() <= 32 => u,
         _ => return,
     };
 
-    {
-        let clients_lock = clients.lock().await;
-        if clients_lock.contains_key(&username) {
-            let _ = writer
-                .write_all(b"AUTH_FAIL username already in use\n")
-                .await;
-            return;
-        }
-    }
-
-    // 2. Join key, up to 3 attempts
+    // 2. Join key, up to 3 attempts. Failures accumulate per source IP across
+    //    connections, so reconnecting does not reset the budget.
     let mut authed = false;
     for attempt in 0..3 {
         if writer.write_all(b"Enter join key: \n").await.is_err() {
             return;
         }
         match read_line_trim(&mut reader, &mut line).await {
-            Some(k) if constant_time_eq(&k, &key) => {
-                authed = true;
-                break;
-            }
-            Some(_) => {
+            Some(k) => {
+                let expected = hub.key.read().await.clone();
+                if constant_time_eq(&k, &expected) {
+                    hub.limiter.lock().await.record_success(ip);
+                    authed = true;
+                    break;
+                }
+                let failures = hub
+                    .limiter
+                    .lock()
+                    .await
+                    .record_failure(ip, Instant::now());
+                tokio::time::sleep(failure_delay(failures)).await;
                 if attempt == 2 {
                     let _ = writer.write_all(b"AUTH_FAIL wrong join key\n").await;
                 }
@@ -320,59 +431,168 @@ async fn handle_client(stream: TcpStream, clients: ClientMap, key: Arc<String>, 
         return;
     }
 
-    // 3. Accepted — tell the client, register it, announce it
+    // 3. Username uniqueness is checked only after the key is proven, so
+    //    unauthenticated peers cannot squat on names.
+    {
+        let clients = hub.clients.lock().await;
+        if clients.contains_key(&username) {
+            let _ = writer
+                .write_all(b"AUTH_FAIL username already in use\n")
+                .await;
+            return;
+        }
+    }
+
+    // 4. Accepted — tell the client, register it, announce it
     if writer.write_all(b"AUTH_OK\n").await.is_err() {
         return;
     }
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Out>();
+    let (kick_tx, mut kick_rx) = oneshot::channel::<()>();
     {
-        let mut clients_lock = clients.lock().await;
-        clients_lock.insert(username.clone(), tx);
+        let mut clients = hub.clients.lock().await;
+        clients.insert(
+            username.clone(),
+            ClientEntry {
+                id,
+                tx: tx.clone(),
+                kick: Some(kick_tx),
+            },
+        );
     }
 
-    if !quiet {
+    if !hub.quiet {
         println!("🟢 {} connected.", username);
     }
     broadcast(
-        &clients,
+        &hub,
         &format!("📢 *** {} joined the chat ***\n", username),
     )
     .await;
 
-    // 4. Writer task: broadcast channel -> TCP stream
+    // 5. Writer task: channel -> TCP stream. `Close` ends the connection.
     let write_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if writer.write_all(msg.as_bytes()).await.is_err() {
-                break;
+            match msg {
+                Out::Text(text) => {
+                    if writer.write_all(text.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+                Out::Close => break,
             }
         }
     });
 
-    // 5. Read incoming lines from this user and broadcast them
+    // 6. Read incoming lines. The host can claim its role and kick users.
+    let mut is_host = false;
+    let mut kicked = false;
     loop {
         line.clear();
-        match reader.read_line(&mut line).await {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    let formatted = format!("[{}] {}\n", username, trimmed);
-                    broadcast(&clients, &formatted).await;
+        tokio::select! {
+            _ = &mut kick_rx => {
+                kicked = true;
+                break;
+            }
+            read = reader.read_line(&mut line) => {
+                match read {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Some(token) = trimmed.strip_prefix("HOST ") {
+                            if constant_time_eq(token.trim(), &hub.host_token) {
+                                is_host = true;
+                            }
+                            continue;
+                        }
+                        if let Some(target) = trimmed.strip_prefix("KICK ") {
+                            if is_host {
+                                handle_kick(&hub, &username, target.trim(), &tx).await;
+                            }
+                            continue;
+                        }
+                        let formatted = format!("[{}] {}\n", username, trimmed);
+                        broadcast(&hub, &formatted).await;
+                    }
                 }
             }
         }
     }
 
-    // 6. Cleanup
+    // 7. Cleanup. Only remove our own entry: a kicked user may have reconnected
+    //    under the same name before this task noticed.
     {
-        let mut clients_lock = clients.lock().await;
-        clients_lock.remove(&username);
+        let mut clients = hub.clients.lock().await;
+        if clients.get(&username).map(|entry| entry.id) == Some(id) {
+            clients.remove(&username);
+        }
     }
     write_task.abort();
-    if !quiet {
+    if !hub.quiet {
         println!("🔴 {} disconnected.", username);
     }
-    broadcast(&clients, &format!("📢 *** {} left the chat ***\n", username)).await;
+    if kicked {
+        broadcast(
+            &hub,
+            &format!("📢 *** {} was removed by the host ***\n", username),
+        )
+        .await;
+    } else {
+        broadcast(&hub, &format!("📢 *** {} left the chat ***\n", username)).await;
+    }
+}
+
+/// Disconnect a guest and rotate the join key so the old invite cannot be
+/// reused. Only reachable from a connection that proved the host token.
+async fn handle_kick(
+    hub: &Hub,
+    host: &str,
+    target: &str,
+    host_tx: &mpsc::UnboundedSender<Out>,
+) {
+    if target.is_empty() {
+        let _ = host_tx.send(Out::Text("usage: /kick <username>\n".to_string()));
+        return;
+    }
+    if target == host {
+        let _ = host_tx.send(Out::Text("you cannot remove yourself\n".to_string()));
+        return;
+    }
+
+    let entry = hub.clients.lock().await.remove(target);
+    let Some(entry) = entry else {
+        let _ = host_tx.send(Out::Text(format!("no connected user named {target}\n")));
+        return;
+    };
+
+    let _ = entry.tx.send(Out::Text("KICKED removed by the host\n".to_string()));
+    let _ = entry.tx.send(Out::Close);
+    if let Some(kick) = entry.kick {
+        let _ = kick.send(());
+    }
+
+    // Rotate the key: the removed person knows the old one.
+    let new_key = generate_key();
+    let display = display_key(&new_key);
+    *hub.key.write().await = new_key;
+    let copied = match hub.share.as_ref() {
+        Some(addr) => {
+            let cmd = format!("cargo run -p vanish-client -- {addr}");
+            copy_to_clipboard(&format!("Join my Vanish chat:\n{cmd}\nJoin key: {display}"))
+        }
+        None => copy_to_clipboard(&format!("Join key: {display}")),
+    };
+    let _ = host_tx.send(Out::Text(format!(
+        "VANISH_KEY {display} {}\n",
+        u8::from(copied)
+    )));
+
+    if !hub.quiet {
+        println!("🔑 removed {target}; new join key: {display}");
+    }
 }
 
 async fn read_line_trim(reader: &mut BufReader<OwnedReadHalf>, line: &mut String) -> Option<String> {
@@ -383,10 +603,10 @@ async fn read_line_trim(reader: &mut BufReader<OwnedReadHalf>, line: &mut String
     }
 }
 
-async fn broadcast(clients: &ClientMap, message: &str) {
-    let clients_lock = clients.lock().await;
-    for tx in clients_lock.values() {
-        let _ = tx.send(message.to_string());
+async fn broadcast(hub: &Hub, message: &str) {
+    let clients = hub.clients.lock().await;
+    for entry in clients.values() {
+        let _ = entry.tx.send(Out::Text(message.to_string()));
     }
 }
 
@@ -488,5 +708,53 @@ mod tests {
         assert_eq!(normalize_key("abcd-efgh"), "ABCDEFGH");
         assert!(constant_time_eq("test-key", "TESTKEY"));
         assert!(!constant_time_eq("TESTKEY", "WRONG"));
+    }
+
+    #[test]
+    fn limiter_blocks_after_repeated_failures_and_expires() {
+        let mut limiter = JoinLimiter::default();
+        let ip: IpAddr = "203.0.113.7".parse().unwrap();
+        let t0 = Instant::now();
+
+        assert!(matches!(limiter.admit(ip, t0), Admission::Allowed));
+        for _ in 0..MAX_JOIN_FAILURES {
+            limiter.record_failure(ip, t0);
+        }
+        assert!(matches!(
+            limiter.admit(ip, t0),
+            Admission::Blocked { retry_after } if retry_after > Duration::ZERO
+        ));
+        assert!(matches!(
+            limiter.admit(ip, t0 + JOIN_BLOCK + Duration::from_secs(1)),
+            Admission::Allowed
+        ));
+    }
+
+    #[test]
+    fn limiter_resets_after_window_and_on_success() {
+        let mut limiter = JoinLimiter::default();
+        let ip: IpAddr = "203.0.113.8".parse().unwrap();
+        let t0 = Instant::now();
+
+        for _ in 0..MAX_JOIN_FAILURES - 1 {
+            limiter.record_failure(ip, t0);
+        }
+        // Old failures outside the window no longer count.
+        let later = t0 + JOIN_WINDOW + Duration::from_secs(1);
+        let count = limiter.record_failure(ip, later);
+        assert_eq!(count, 1);
+        assert!(matches!(limiter.admit(ip, later), Admission::Allowed));
+
+        // A successful join clears that IP's history.
+        limiter.record_success(ip);
+        assert!(matches!(limiter.admit(ip, later), Admission::Allowed));
+        assert_eq!(limiter.record_failure(ip, later), 1);
+    }
+
+    #[test]
+    fn failure_delay_grows_but_is_capped() {
+        assert_eq!(failure_delay(1), Duration::from_millis(250));
+        assert_eq!(failure_delay(2), Duration::from_millis(500));
+        assert_eq!(failure_delay(9), Duration::from_millis(1000));
     }
 }

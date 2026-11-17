@@ -56,6 +56,14 @@ struct App {
     pending_self: VecDeque<String>,
     /// Join key injected by the server when it launches the local client (host mode).
     auto_key: Option<String>,
+    /// Guest command, when tailcat is running (host mode).
+    invite_cmd: Option<String>,
+    /// Join key shown in the host's invite line.
+    invite_key: Option<String>,
+    invite_copied: bool,
+    /// Host-mode authority token; enables `/kick <name>`.
+    host_token: Option<String>,
+    host_claimed: bool,
     auth_error: Option<String>,
     should_quit: bool,
 }
@@ -68,39 +76,61 @@ enum Action {
 
 impl App {
     fn new(address: String) -> Self {
-        let mut messages = Vec::new();
-        let invite_key = std::env::var("VANISH_INVITE_KEY")
-            .ok()
-            .filter(|s| !s.is_empty());
-        let invite = std::env::var("VANISH_INVITE").ok().filter(|s| !s.is_empty());
-        if let Some(key) = invite_key {
-            let copied = std::env::var("VANISH_INVITE_COPIED").is_ok();
-            let content = match (copied, invite) {
-                (true, _) => format!("join key {key} · invite + key copied to clipboard"),
-                (false, Some(cmd)) => format!("join key {key} · guests run: {cmd}"),
-                (false, None) => format!("join key {key}"),
-            };
-            messages.push(ChatMessage {
-                time: String::new(),
-                sender: String::new(),
-                content,
-                kind: MsgKind::Invite,
-            });
-        }
-        Self {
+        let mut app = Self {
             address,
             phase: Phase::Login,
             input: String::new(),
             username: String::new(),
-            messages,
+            messages: Vec::new(),
             list_state: ListState::default(),
             connected: true,
             pending_self: VecDeque::new(),
             auto_key: std::env::var("VANISH_KEY")
                 .ok()
                 .filter(|k| !k.trim().is_empty()),
+            invite_cmd: std::env::var("VANISH_INVITE").ok().filter(|s| !s.is_empty()),
+            invite_key: std::env::var("VANISH_INVITE_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            invite_copied: std::env::var("VANISH_INVITE_COPIED").is_ok(),
+            host_token: std::env::var("VANISH_HOST_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            host_claimed: false,
             auth_error: None,
             should_quit: false,
+        };
+        app.refresh_invite();
+        app
+    }
+
+    /// Keep the top-of-chat invite line in sync with the current key and
+    /// clipboard state (the server sends a fresh key after a kick).
+    fn refresh_invite(&mut self) {
+        let Some(key) = self.invite_key.clone() else {
+            return;
+        };
+        let content = match (self.invite_copied, self.invite_cmd.clone()) {
+            (true, _) => format!("join key {key} · invite + key copied to clipboard"),
+            (false, Some(cmd)) => format!("join key {key} · guests run: {cmd}"),
+            (false, None) => format!("join key {key}"),
+        };
+        if let Some(msg) = self
+            .messages
+            .iter_mut()
+            .find(|msg| matches!(msg.kind, MsgKind::Invite))
+        {
+            msg.content = content;
+        } else {
+            self.messages.insert(
+                0,
+                ChatMessage {
+                    time: String::new(),
+                    sender: String::new(),
+                    content,
+                    kind: MsgKind::Invite,
+                },
+            );
         }
     }
 
@@ -136,6 +166,15 @@ impl App {
                     Phase::Key if self.auto_key.is_some() => Action::None,
                     Phase::Key => Action::Send(format!("{text}\n")),
                     Phase::Chat => {
+                        // Host-only command; never echoed as a chat message.
+                        if self.host_token.is_some() {
+                            if let Some(name) = text.strip_prefix("/kick ") {
+                                let name = name.trim();
+                                if !name.is_empty() {
+                                    return Action::Send(format!("KICK {name}\n"));
+                                }
+                            }
+                        }
                         self.push_local_message(text.clone());
                         Action::Send(format!("{text}\n"))
                     }
@@ -163,17 +202,42 @@ impl App {
             .select(Some(self.messages.len().saturating_sub(1)));
     }
 
-    fn push_server_line(&mut self, raw: &str) {
+    /// Handle a line from the server. Returns an optional line to send back
+    /// (used once to claim the host role after authentication).
+    fn push_server_line(&mut self, raw: &str) -> Option<String> {
         let line = raw.trim_end_matches(['\r', '\n']).trim();
         if line.is_empty() {
-            return;
+            return None;
         }
 
-        if let Some(rest) = line.strip_prefix("AUTH_OK") {
-            let _ = rest;
+        if let Some(rest) = line.strip_prefix("VANISH_KEY ") {
+            let mut parts = rest.split_whitespace();
+            if let Some(key) = parts.next() {
+                self.invite_key = Some(key.to_string());
+            }
+            self.invite_copied = parts.next() == Some("1");
+            self.refresh_invite();
+            return None;
+        }
+        if let Some(rest) = line.strip_prefix("KICKED") {
+            let reason = rest.trim();
+            self.auth_error = Some(if reason.is_empty() {
+                "removed from the chat".to_string()
+            } else {
+                reason.to_string()
+            });
+            self.should_quit = true;
+            return None;
+        }
+        if line.starts_with("AUTH_OK") {
             self.phase = Phase::Chat;
             self.connected = true;
-            return;
+            // Prove host authority once, after the server has registered us.
+            if let Some(token) = self.host_token.as_ref().filter(|_| !self.host_claimed) {
+                self.host_claimed = true;
+                return Some(format!("HOST {token}\n"));
+            }
+            return None;
         }
         if let Some(rest) = line.strip_prefix("AUTH_FAIL") {
             let reason = rest.trim();
@@ -183,12 +247,12 @@ impl App {
                 reason.to_string()
             });
             self.should_quit = true;
-            return;
+            return None;
         }
 
         // Ignore handshake prompts until we are fully in chat mode.
         if self.phase != Phase::Chat {
-            return;
+            return None;
         }
 
         let msg = parse_line(line, &self.username);
@@ -199,13 +263,14 @@ impl App {
             if let Some(front) = self.pending_self.front() {
                 if *front == msg.content {
                     self.pending_self.pop_front();
-                    return;
+                    return None;
                 }
             }
         }
 
         self.messages.push(msg);
         self.select_last();
+        None
     }
 }
 
@@ -449,7 +514,9 @@ async fn run_app(
             maybe_line = server_rx.recv() => {
                 match maybe_line {
                     Some(line) => {
-                        app.push_server_line(&line);
+                        if let Some(reply) = app.push_server_line(&line) {
+                            writer.write_all(reply.as_bytes()).await?;
+                        }
                         if app.should_quit {
                             break;
                         }

@@ -26,6 +26,11 @@ no accounts, no database, no inbound ports.
   spinner instead of a wall of `Compiling ...` lines.
 - **Join key per boot.** The server prints a random key at startup. Guests cannot
   join without it. Restart the server and the old key is dead — nothing is persisted.
+- **Host controls.** `/kick <name>` disconnects a guest, announces it, and rotates the
+  join key so the removed person's old key cannot rejoin. Only the host's local client
+  can kick (it holds a per-boot token).
+- **Guess throttling.** Wrong keys are rate-limited per source IP across connections:
+  5 failures in 60 seconds earns a 60-second block, with a growing delay per failure.
 - **Polished TUI.** Fixed input box, timestamps, per-user colors, own messages
   highlighted, join/leave events dimmed, and instant local echo of what you send.
 - **tailcat on autopilot.** The server starts tailcat in the background and prints a
@@ -143,7 +148,15 @@ The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equival
 
 - **Join key.** 8 random characters (~40 bits) from the OS RNG, regenerated every boot,
   never written to disk, compared in constant time, with 3 attempts per connection.
-  It is a session bearer token, not a user identity.
+  It is a session bearer token, not a user identity. Wrong keys are throttled per source
+  IP: 5 failures within 60 seconds blocks that IP for 60 seconds, and each failure adds
+  a 250 ms–1 s delay. Behind tailcat every guest can share one source address, so the
+  limit also behaves as a coarse global throttle (and a brief denial-of-service lever).
+- **Revocation.** The host client gets a random per-boot token (never printed) and uses
+  it to claim host authority after authenticating. `/kick <name>` disconnects that
+  client, announces the removal, and rotates the join key; existing guests keep their
+  sessions, but the old invite cannot be reused. There is no account system, so a kicked
+  user who obtains the new key can join again under a new name.
 - **Transport.** Over localhost the traffic is plain TCP. Across machines, run it through
   tailcat (or Tailscale): the tunnel is WireGuard-encrypted, the tailcat address is
   itself a secret capability, and no inbound port is exposed.
@@ -167,6 +180,10 @@ The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equival
   message immediately on send and skips the server's echo of it, so the chat feels
   instant and never double-prints. A background thread feeds keyboard events; a reader
   task feeds server lines.
+- **Kick flow**: the host's client reads `VANISH_HOST_TOKEN` from the server, sends it
+  once after `AUTH_OK`, and turns `/kick <name>` into a `KICK` command. The server
+  verifies the token, drops the target's connection, rotates the key, and sends the new
+  invite to the host's client, which refreshes the TUI line and the clipboard.
 - **tailcat glue**: the server spawns `tailcat serve <port>`, parses the address from its
   output, and kills it on shutdown. The client spawns `tailcat forward` for `tc...`
   targets and connects to the resulting local port.
@@ -176,6 +193,7 @@ The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equival
 | Key | Action |
 |---|---|
 | Enter | submit username / key / message |
+| `/kick <name>` | host only: remove a participant and rotate the key |
 | Backspace | edit input |
 | Ctrl+C | quit (terminal is restored) |
 
@@ -201,5 +219,12 @@ Covers tailcat address parsing, bind-port parsing, and join-key normalization/co
 
 - No message history or persistence — restart and it is gone ("vanish").
 - No file transfer, typing indicators, or rooms.
+- Rate limiting is per source IP. Shared NAT (or tailcat, where every guest can share
+  one address) means one attacker can briefly throttle or block new joins for everyone.
+- After a kick the join key rotates; re-share the new invite with the guests you want.
+  A determined removed user who receives the new key can rejoin under another name —
+  there are no per-user credentials or cryptographic identities yet.
+- Messages are not end-to-end encrypted: the server (the host) can read them. tailcat
+  protects the network path, not the server process.
 - A readable browser URL is not possible with tailcat alone; use a DNS `TXT` record or a
   different tunnel if you need one.
