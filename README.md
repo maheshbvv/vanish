@@ -42,12 +42,13 @@ Guests don't need to install anything. The host shares a single command
 the chat opens:
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address> [key]
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>
 ```
 
 It downloads the prebuilt client binary (cached for instant subsequent joins),
-connects through the tunnel, passes the join key automatically, and opens
-the chat right in the terminal. No clone, no Rust toolchain, no prior setup.
+connects through the tunnel, and opens the chat right in the terminal.
+The guest types their username, enters the join key shared by the host, and starts chatting.
+No clone, no Rust toolchain, no prior setup.
 
 Prefer the source? See [Build](#build).
 
@@ -140,7 +141,8 @@ The server starts tailcat for you and prints a ready-to-share one-liner:
 ```bash
 vanish
 # tailcat: address tcomFwWCCcjS5nKNqAod034nWoJZW0LZq
-# tailcat: guests connect with  sh -c "$(curl -fsSL .../join.sh)" -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080 ABCD-EFGH
+# tailcat: guests connect with  sh -c "$(curl -fsSL .../join.sh)" -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
+# tailcat: guests join key      ABCD-EFGH
 ```
 
 A guest pastes that command — no install, no clone. The client binary is
@@ -148,7 +150,7 @@ downloaded and cached, connects through the tunnel, and opens the chat
 directly in the terminal:
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080 ABCD-EFGH
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
 ```
 
 The client detects the `tc...` address, runs `tailcat forward` in the background, and

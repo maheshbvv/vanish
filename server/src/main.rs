@@ -140,8 +140,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("tailcat: address {tc_addr}");
                 println!(
                     "tailcat: guests connect with  {}",
-                    join_command(&format!("{tc_addr}:{port}"), &display_key(&key))
+                    join_command(&format!("{tc_addr}:{port}"))
                 );
+                println!("tailcat: guests join key      {}", display_key(&key));
                 println!("   (tailcat runs in the background; it stops with this server)");
                 share = Some(format!("{tc_addr}:{port}"));
                 tailcat = Some(child);
@@ -166,12 +167,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // clipboard when a clipboard tool is available.
     let invite_key = display_key(&key);
     let target_addr = share.as_deref().unwrap_or(&address);
-    let invite_cmd = join_command(target_addr, &invite_key);
-    let invite_copied = copy_to_clipboard(&format!(
-        "Join my Vanish chat:\n{invite_cmd}\nJoin key: {invite_key}"
-    ));
+    let invite_cmd = join_command(target_addr);
+    let invite_copied = copy_to_clipboard(&invite_cmd);
     if invite_copied {
-        println!("vanish: invite + join key copied to clipboard");
+        println!("vanish: join command copied to clipboard (share the join key separately)");
     }
 
     let (host_tx, mut host_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -578,8 +577,8 @@ async fn handle_kick(hub: &Hub, host: &str, target: &str, host_tx: &mpsc::Unboun
     let display = display_key(&new_key);
     *hub.key.write().await = new_key;
     let target_addr = hub.share.as_deref().unwrap_or("127.0.0.1:8080");
-    let cmd = join_command(target_addr, &display);
-    let copied = copy_to_clipboard(&format!("Join my Vanish chat:\n{cmd}\nJoin key: {display}"));
+    let cmd = join_command(target_addr);
+    let copied = copy_to_clipboard(&cmd);
     let _ = host_tx.send(Out::Text(format!(
         "VANISH_KEY {display} {}\n",
         u8::from(copied)
@@ -629,9 +628,9 @@ fn display_key(key: &str) -> String {
 
 /// The paste-able one-liner guests run to join: downloads the client binary
 /// from the latest GitHub release and connects — no prior install needed.
-fn join_command(address: &str, key: &str) -> String {
+fn join_command(address: &str) -> String {
     format!(
-        "sh -c \"$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)\" -- {address} {key}"
+        "sh -c \"$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)\" -- {address}"
     )
 }
 

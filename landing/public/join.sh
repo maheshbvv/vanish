@@ -3,7 +3,7 @@
 #
 # Usage (guests paste this one-liner shared by the host):
 #
-#   curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh | sh -s -- <address> [key]
+#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>
 #
 # No git clone or Rust toolchain needed. Cached after first run.
 set -eu
@@ -14,7 +14,7 @@ KEY="${2:-}"
 if [ -z "$ADDRESS" ]; then
   echo "usage: join.sh <address> [key]" >&2
   echo "  address: host:port or tailcat-address:port" >&2
-  echo "  key:     optional join key (suppresses key prompt)" >&2
+  echo "  key:     optional join key (if omitted, you will be prompted)" >&2
   exit 1
 fi
 
