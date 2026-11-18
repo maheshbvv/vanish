@@ -7,7 +7,7 @@ use chrono::Local;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -501,11 +501,13 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Ap
 
 fn spawn_input_thread() -> mpsc::UnboundedReceiver<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
-    std::thread::spawn(move || loop {
-        if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-            if let Ok(ev) = event::read() {
-                if tx.send(ev).is_err() {
-                    break;
+    std::thread::spawn(move || {
+        loop {
+            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
+                if let Ok(ev) = event::read() {
+                    if tx.send(ev).is_err() {
+                        break;
+                    }
                 }
             }
         }
@@ -675,9 +677,7 @@ async fn main() -> AppResult<()> {
             eprintln!(
                 "  • Another machine: use the server's LAN IP, e.g. `vanish-client 192.168.1.20:8080`"
             );
-            eprintln!(
-                "  • tailcat: use the printed address, e.g. `vanish-client tc...:8080`"
-            );
+            eprintln!("  • tailcat: use the printed address, e.g. `vanish-client tc...:8080`");
             std::process::exit(1);
         }
     };
