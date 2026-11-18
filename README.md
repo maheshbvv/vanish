@@ -45,15 +45,24 @@ the chat opens:
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>
 ```
 
-It downloads the prebuilt client binary (cached for instant subsequent joins),
-connects through the tunnel, and opens the chat right in the terminal.
+It downloads the prebuilt client binary into a temporary sandbox, connects
+through the tunnel, and opens the chat right in the terminal.
 The guest types their username, enters the join key shared by the host, and starts chatting.
-No clone, no Rust toolchain, no prior setup.
+When the host closes the chat (or the guest leaves), the client and all downloaded files
+are automatically deleted, leaving zero trace on the machine.
+
+For locally installed clients, pass `--vanish` (`vanish-client <address> --vanish`)
+to auto-delete the binary upon exit.
 
 Prefer the source? See [Build](#build).
 
 ## Features
 
+- **Completely untraceable (zero trace).** Messages live strictly in volatile memory
+  — no database, no disk writes, and no server logs. Terminal runs in an alternate screen
+  buffer so all messages disappear from your terminal scrollback the moment you exit.
+  Zero-install guests leave no binary behind (cleaned up automatically on exit); installed
+  clients can pass `--vanish` to self-destruct the binary when the room closes.
 - **One command to start.** Running the server opens a local client in the same
   terminal — type a username and you are chatting. When the host quits, the server
   (and the room) shuts down. The full invite (guest command + join key) is copied to the
@@ -188,11 +197,25 @@ Client:
 | Setting | How | Default |
 |---|---|---|
 | Target | CLI arg, or `CHAT_SERVER`; accepts `host:port`, `tc...`, `tc...:port` | `127.0.0.1:8080` |
+| Self-destruct | `--vanish` / `--self-destruct`, or `VANISH_SELF_DESTRUCT=1` | off (deletes binary on exit) |
 
 The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equivalent.
 
-## Security model
+## Security & untraceability model
 
+- **Zero trace on disk.** No database, no chat logs, and no temp files are saved.
+  All message payloads and usernames exist solely in volatile process RAM while the
+  room is open. When the host quits, the server process terminates and everything disappears.
+- **Scrollback protection.** Both the host and guest clients use terminal alternate screen
+  buffers (`EnterAlternateScreen`). When the chat closes or you disconnect, the terminal view
+  is restored to what it was before Vanish launched — no message history or transcript is left
+  in your terminal scrollback.
+- **Automatic guest self-cleanup.** Guests who join using the one-liner (`join.sh`) run
+  inside an isolated sandbox (`mktemp -d`). When the chat ends or the host disconnects,
+  the downloaded binary and all temporary files are purged immediately from disk.
+- **`--vanish` self-destruct for installed clients.** If `vanish-client` is run with `--vanish`
+  or `--self-destruct` (or `VANISH_SELF_DESTRUCT=1`), the client unlinks and deletes its own
+  executable from disk the instant the chat finishes.
 - **Join key.** 8 random characters (~40 bits) from the OS RNG, regenerated every boot,
   never written to disk, compared in constant time, with 3 attempts per connection.
   It is a session bearer token, not a user identity. Wrong keys are throttled per source

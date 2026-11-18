@@ -636,12 +636,16 @@ async fn main() -> AppResult<()> {
         return Ok(());
     }
 
+    let self_destruct = std::env::var("VANISH_SELF_DESTRUCT").ok().as_deref() == Some("1")
+        || std::env::args().any(|arg| arg == "--vanish" || arg == "--self-destruct");
+
     // First CLI arg (or CHAT_SERVER):
     //   - `tc...` tailcat address (optionally `:remote_port`) -> auto-run tailcat forward
     //   - `host:port` -> connect directly
     //   - nothing -> 127.0.0.1:8080
     let raw = std::env::args()
-        .nth(1)
+        .skip(1)
+        .find(|arg| !arg.starts_with('-'))
         .or_else(|| std::env::var("CHAT_SERVER").ok())
         .unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
@@ -724,5 +728,13 @@ async fn main() -> AppResult<()> {
     } else {
         println!("Goodbye.");
     }
+
+    if self_destruct {
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::fs::remove_file(&exe);
+            println!("vanish: client binary deleted from disk (zero trace).");
+        }
+    }
+
     Ok(())
 }

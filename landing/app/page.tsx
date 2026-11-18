@@ -15,11 +15,13 @@ const diff = [
   { kind: "del", text: " accounts and password resets" },
   { kind: "del", text: " a database of who said what" },
   { kind: "del", text: " an open inbound port" },
+  { kind: "del", text: " chat logs or scrollback traces" },
   { kind: "blank", text: "" },
   { kind: "add", text: " one binary, nothing left running" },
   { kind: "add", text: " a key, random every boot" },
   { kind: "add", text: " a tunnel between machines" },
   { kind: "add", text: " a process that exits with the host" },
+  { kind: "add", text: " zero trace on exit, client auto-wiped" },
 ];
 
 const holds = [
@@ -34,6 +36,14 @@ const holds = [
   {
     term: "/kick bob",
     line: "Disconnects the guest, rotates the key.",
+  },
+  {
+    term: "Zero trace",
+    line: "Messages live only in RAM. Alternate screen clears terminal scrollback on exit.",
+  },
+  {
+    term: "Self-destruct",
+    line: "Guest one-liner auto-deletes on exit. Local clients can pass --vanish to wipe the binary.",
   },
   {
     term: "Transport",
@@ -63,7 +73,7 @@ export default function Page() {
           <div className="container hero__inner">
             <div className="hero__copy">
               <h1>The room closes when the host quits.</h1>
-              <p className="lead">Terminal chat in Rust, one key per boot.</p>
+              <p className="lead">Ephemeral terminal chat in Rust. Completely untraceable, zero trace on exit.</p>
               <Install command={COMMAND} note="Run vanish." />
             </div>
             <Session
@@ -94,6 +104,14 @@ export default function Page() {
                 <tr>
                   <td>A terminal</td>
                   <td>Opens your client in place.</td>
+                </tr>
+                <tr>
+                  <td>Zero-install join</td>
+                  <td>Guests join via one-liner; binary auto-purges on disconnect.</td>
+                </tr>
+                <tr>
+                  <td>Zero trace</td>
+                  <td>RAM-only. Alternate screen cleans scrollback. Local clients can pass --vanish.</td>
                 </tr>
                 <tr>
                   <td>tailcat, optional</td>
@@ -170,13 +188,21 @@ export default function Page() {
         <section className="band" id="run">
           <div className="container band__inner">
             <div className="band__copy">
-              <h2>Start a room.</h2>
-              <p>Install, then run vanish.</p>
+              <h2>Start or join.</h2>
+              <p>Host a secret room, or join one with zero install.</p>
               <div className="band__links">
                 <a href={SOURCE}>source on GitHub</a>
               </div>
             </div>
-            <Install command={COMMAND} />
+            <div>
+              <p style={{ margin: "0 0 8px 4px", fontSize: "0.85rem", color: "var(--color-muted)" }}>Host a room:</p>
+              <Install command={COMMAND} note="Run vanish." />
+              <p style={{ margin: "20px 0 8px 4px", fontSize: "0.85rem", color: "var(--color-muted)" }}>Join a room (Zero-trace guest):</p>
+              <Install
+                command='sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>'
+                note="No install needed. Client auto-deletes when the room closes."
+              />
+            </div>
           </div>
         </section>
       </main>
@@ -184,8 +210,8 @@ export default function Page() {
       <footer className="footer">
         <div className="container">
           <p>
-            Vanish is a Cargo workspace: tokio on the server, ratatui and crossterm in the client. Releases are built by CI. No accounts, so a
-            kicked guest with the new key can rejoin. The screenshots above are from the running client on 17 Nov 2026.
+            Vanish is an ephemeral terminal chat in Rust: tokio on the server, ratatui and crossterm in the client.
+            No accounts, no database, no logs, and zero disk trace. All data dies with the room.
             Source at{" "}
             <a href={SOURCE}>github.com/maheshbvv/vanish</a>.
           </p>

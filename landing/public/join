@@ -1,11 +1,12 @@
 #!/bin/sh
-# Vanish join: downloads the client binary and opens the chat in your terminal.
+# Vanish zero-trace join: downloads the client binary to a temporary folder,
+# connects to the chat, and completely removes all downloaded files on exit.
 #
 # Usage (guests paste this one-liner shared by the host):
 #
 #   sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>
 #
-# No git clone or Rust toolchain needed. Cached after first run.
+# Leaves zero trace on disk once the chat is closed.
 set -eu
 
 ADDRESS="${1:-}"
@@ -55,49 +56,40 @@ esac
 
 target="${arch_part}-${os_part}"
 
-# Cache directory so re-joining a room or joining future rooms is instant
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/vanish"
-CACHED_BIN="${CACHE_DIR}/vanish-client"
-
-if [ -x "$CACHED_BIN" ]; then
-  bin="$CACHED_BIN"
-else
-  if [ "$VERSION" = "latest" ]; then
-    api="https://api.github.com/repos/${REPO}/releases/latest"
-    if command -v python3 >/dev/null 2>&1; then
-      VERSION=$(curl -fsSL "$api" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)
-    else
-      VERSION=$(curl -fsSL "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
-    fi
-    [ -n "$VERSION" ] || VERSION="v0.1.0"
-  fi
-
-  name="vanish-${VERSION}-${target}"
-  url="https://github.com/${REPO}/releases/download/${VERSION}/${name}.tar.gz"
-
-  tmp=$(mktemp -d 2>/dev/null || mktemp -d -t vanish)
-  trap 'rm -rf "$tmp"' EXIT INT TERM
-
-  printf 'vanish: downloading client for %s…\n' "$target" >&2
-  curl -fsSL "$url" -o "${tmp}/vanish.tar.gz" || { echo "vanish: download failed from $url" >&2; exit 1; }
-
-  tar -xzf "${tmp}/vanish.tar.gz" -C "$tmp"
-  downloaded_bin="${tmp}/${name}/vanish-client"
-  chmod +x "$downloaded_bin"
-
-  # Persist to cache if writable, otherwise use temp
-  if mkdir -p "$CACHE_DIR" 2>/dev/null && cp "$downloaded_bin" "$CACHED_BIN" 2>/dev/null; then
-    chmod +x "$CACHED_BIN"
-    bin="$CACHED_BIN"
+if [ "$VERSION" = "latest" ]; then
+  api="https://api.github.com/repos/${REPO}/releases/latest"
+  if command -v python3 >/dev/null 2>&1; then
+    VERSION=$(curl -fsSL "$api" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)
   else
-    bin="$downloaded_bin"
+    VERSION=$(curl -fsSL "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
   fi
+  [ -n "$VERSION" ] || VERSION="v0.1.0"
 fi
+
+name="vanish-${VERSION}-${target}"
+url="https://github.com/${REPO}/releases/download/${VERSION}/${name}.tar.gz"
+
+tmp=$(mktemp -d 2>/dev/null || mktemp -d -t vanish)
+cleanup() {
+  rm -rf "$tmp"
+}
+trap cleanup EXIT INT TERM
+
+printf 'vanish: opening secret chat for %s…\n' "$target" >&2
+curl -fsSL "$url" -o "${tmp}/vanish.tar.gz" || { echo "vanish: download failed from $url" >&2; exit 1; }
+
+tar -xzf "${tmp}/vanish.tar.gz" -C "$tmp"
+bin="${tmp}/${name}/vanish-client"
+chmod +x "$bin"
 
 # Reconnect stdin to controlling terminal if available, because curl | sh
 # leaves stdin attached to the pipe, which would break raw mode / keyboard events.
 if [ ! -t 0 ] && [ -e /dev/tty ]; then
-  exec "$bin" "$ADDRESS" </dev/tty
+  "$bin" "$ADDRESS" </dev/tty || true
 else
-  exec "$bin" "$ADDRESS"
+  "$bin" "$ADDRESS" || true
 fi
+
+# Chat has closed: clean up completely so zero trace is left on the machine
+cleanup
+trap - EXIT INT TERM
