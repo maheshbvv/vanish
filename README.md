@@ -1,22 +1,31 @@
 # Vanish
 
-A terminal-based secret chat. Self-hosted, gated by a one-session join key, with an
-optional WireGuard-encrypted tunnel ([tailcat](https://github.com/tailscale/tailcat)) —
-no accounts, no database, no inbound ports.
+Ephemeral terminal chat in Rust. The room closes when the host quits.
 
-**Explore the project at [vanish.pendura.in](https://vanish.pendura.in)**
+Self-hosted and gated by a one-session join key, with an optional WireGuard tunnel through
+[tailcat](https://github.com/tailscale/tailcat). No accounts, no database, no inbound ports.
 
-```
-┌ Vanish ──────────────────────────────────────┐
-│● connected  127.0.0.1:8080  ·  you: alice     │
-└──────────────────────────────────────────────┘
+```text
++ Vanish ------------------------------------------------------------------------------+
+|* connected  127.0.0.1:8080  ·  you: alice                                            |
++--------------------------------------------------------------------------------------+
+  > join key K4YV-7QT2 · invite copied to clipboard
   *** alice joined the chat ***
-00:45 alice   hello everyone
-00:45 bob     hi alice
-┌ Message ─────────────────────────────────────┐
-│> ▊                                            │
-└──────────────────────────────────────────────┘
+  *** bob joined the chat ***
+10:47 alice   no accounts to make, no database to leak
+10:47 bob     one key per boot, and it dies with the room
+10:47 alice   nothing is written to disk. not the key, not the messages
+  *** bob was removed by the host ***
+
++ Message -----------------------------------------------------------------------------+
+|>                                                                                     |
++--------------------------------------------------------------------------------------+
 ```
+
+The host window after `/kick bob`. Before the kick the key was GDNW-ZGGV; after it, K4YV-7QT2.
+
+Site: [vanish.pendura.in](https://vanish.pendura.in).
+Source: [github.com/maheshbvv/vanish](https://github.com/maheshbvv/vanish).
 
 ## Install
 
@@ -26,116 +35,36 @@ macOS (arm64, x86_64) and Linux (x86_64, arm64), prebuilt:
 curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/install.sh | sh
 ```
 
-It downloads the release for your machine, checks its sha256, and puts
-`vanish`, `vanish-server` and `vanish-client` in `~/.local/bin`
-(override with `VANISH_INSTALL_DIR`; pin with `VANISH_VERSION=v0.1.1`).
+The script downloads the release for your machine, checks its sha256, and puts `vanish`,
+`vanish-server` and `vanish-client` in `~/.local/bin`. Override the directory with
+`VANISH_INSTALL_DIR`; pin a release with `VANISH_VERSION=v0.1.1`.
 
 ```bash
 vanish                       # start a room, as the host
 vanish-client <address>      # join someone else's room
 ```
 
-### Zero-install join
-
-Guests don't need to install anything. The host shares a single command
-(printed at startup and copied to the clipboard). The guest pastes it and
-the chat opens:
-
-```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>
-```
-
-It downloads the prebuilt client binary into a temporary sandbox, connects
-through the tunnel, and opens the chat right in the terminal.
-The guest types their username, enters the join key shared by the host, and starts chatting.
-When the host closes the chat (or the guest leaves), the client and all downloaded files
-are automatically deleted, leaving zero trace on the machine.
-
-For locally installed clients, pass `--vanish` (`vanish-client <address> --vanish`)
-to auto-delete the binary upon exit.
-
 Prefer the source? See [Build](#build).
 
-## Features
+## Run it
 
-- **Completely untraceable (zero trace).** Messages live strictly in volatile memory
-  — no database, no disk writes, and no server logs. Terminal runs in an alternate screen
-  buffer so all messages disappear from your terminal scrollback the moment you exit.
-  Zero-install guests leave no binary behind (cleaned up automatically on exit); installed
-  clients can pass `--vanish` to self-destruct the binary when the room closes.
-- **One command to start.** Running the server opens a local client in the same
-  terminal — type a username and you are chatting. When the host quits, the server
-  (and the room) shuts down. The full invite (guest command + join key) is copied to the
-  clipboard automatically when `pbcopy`, `wl-copy`, `xclip`, or `xsel` is available.
-- **Quiet, browser-like startup.** Build output is replaced by a single in-place
-  spinner instead of a wall of `Compiling ...` lines.
-- **Join key per boot.** The server prints a random key at startup. Guests cannot
-  join without it. Restart the server and the old key is dead — nothing is persisted.
-- **Host controls.** `/kick <name>` disconnects a guest, announces it, and rotates the
-  join key so the removed person's old key cannot rejoin. Only the host's local client
-  can kick (it holds a per-boot token).
-- **Guess throttling.** Wrong keys are rate-limited per source IP across connections:
-  5 failures in 60 seconds earns a 60-second block, with a growing delay per failure.
-- **Polished TUI.** Fixed input box, timestamps, per-user colors, own messages
-  highlighted, join/leave events dimmed, and instant local echo of what you send.
-- **tailcat on autopilot.** The server starts tailcat in the background and prints a
-  single paste-able command for guests. The client auto-establishes the tunnel.
-- **Tiny and dependency-light.** Tokio TCP server; ratatui/crossterm client.
-
-## Requirements
-
-When you install the release, only a terminal is needed — the binaries are
-statically linked on Linux and need no Rust toolchain.
-
-Building from source needs:
-
-- Rust 1.75+ (both crates use edition 2021). If your distro ships an older
-  toolchain, install current stable with
-  [rustup](https://rustup.rs) (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`).
-- Optional: [tailcat](https://github.com/tailscale/tailcat) for chatting across machines
-  (`brew install tailcat`). Without it Vanish still runs on localhost.
-- Optional: a clipboard tool to auto-copy the guest invite — `wl-copy` (Wayland),
-  `xclip`, or `xsel` on Linux; `pbcopy` ships with macOS.
-
-## Build
+### Host a room
 
 ```bash
-cargo build --release
+vanish
 ```
 
-This is a Cargo workspace and builds both binaries:
-`target/release/vanish-server` and `target/release/vanish-client`.
-
-## Quick start (same machine)
-
-One command starts the server **and** the host's client in this terminal:
-
-```bash
-./vanish
-# (equivalently: cargo run -p vanish-server)
-```
-
-On first run you see a spinner while it builds, then the join key, then the chat
-client opens by itself. Type a **username** and you are in — the host never types
-the join key.
+One command starts the server **and** the host's client in this terminal. On first run you
+see a quiet spinner while it builds, then the join key, then the chat opens by itself. Type
+a username and you are in; the host never types the key.
 
 When the host quits (`Ctrl+C` in the chat), the server stops and the room ends.
 
-The invite for guests — guest command **and** join key — is printed at startup, copied
-to the clipboard when a clipboard tool exists, and shown at the top of the host's chat
-window, so you can share it without leaving the chat.
+The guest command and join key are printed at startup and copied to the clipboard when
+`pbcopy`, `wl-copy`, `xclip` or `xsel` is available. They also sit at the top of the chat
+window, so you can share them without leaving the chat.
 
-Guests on the same machine open their own terminal:
-
-```bash
-vanish-client
-```
-
-Guests type a **username** and the **join key** printed at startup. Open more
-terminals for more people; usernames must be unique while connected.
-
-To run the server without opening a local client (headless, for `systemd`, a
-server box, or scripted tests):
+For a server box, `systemd`, or scripted tests, skip the local client:
 
 ```bash
 CHAT_HOST=0 vanish
@@ -143,7 +72,28 @@ CHAT_HOST=0 vanish
 
 Host mode is also skipped automatically when stdin is not a terminal.
 
-## Chatting across machines (tailcat, automatic)
+### Join with one command
+
+Guests install nothing. The host shares one line, printed at startup:
+
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>
+```
+
+It downloads the prebuilt client into a temporary sandbox, connects through the tunnel, and
+opens the chat in the terminal. The guest types a username, enters the join key from the
+host, and starts talking.
+
+When the host closes the room or the guest leaves, the client and every downloaded file are
+deleted. Nothing stays on the guest's machine.
+
+An installed client can wipe itself on exit too:
+
+```bash
+vanish-client <address> --vanish
+```
+
+### Across machines, with tailcat
 
 The server starts tailcat for you and prints a ready-to-share one-liner:
 
@@ -154,32 +104,43 @@ vanish
 # tailcat: guests join key      ABCD-EFGH
 ```
 
-A guest pastes that command — no install, no clone. The client binary is
-downloaded and cached, connects through the tunnel, and opens the chat
-directly in the terminal:
+A guest pastes that command: no install, no clone. The client sees the `tc...` address, runs
+`tailcat forward` in the background, and connects through the encrypted tunnel. tailcat must
+be installed on both machines (`brew install tailcat`).
+
+Without tailcat the server falls back to local-only and says how to install it. Turn the
+automatic tunnel off with `CHAT_TAILCAT=0`.
+
+### Same LAN, no tailcat
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
-```
-
-The client detects the `tc...` address, runs `tailcat forward` in the background, and
-connects through the encrypted tunnel. tailcat must be installed on both machines.
-
-If tailcat is not installed the server falls back to local-only and tells you how to
-install it. Disable auto-tailcat explicitly with `CHAT_TAILCAT=0`.
-
-## LAN without tailcat
-
-```bash
-# server (listen on all interfaces)
+# server, on all interfaces
 vanish 0.0.0.0:8080
 
-# client (installed)
+# client, installed
 vanish-client 192.168.1.20:8080
 
-# client (zero-install)
+# client, zero-install
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- 192.168.1.20:8080
 ```
+
+Plain TCP on a LAN, so keep it on a network you trust.
+
+## What the room holds
+
+| Part | What it does |
+|---|---|
+| **Join key** | Eight characters from the OS RNG, never on disk, dead on restart. |
+| **Guess throttle** | Five wrong keys in a minute block that address. |
+| **`/kick bob`** | Disconnects the guest, announces it, rotates the key. |
+| **Zero trace** | Messages live only in RAM. The alternate screen clears terminal scrollback on exit. |
+| **Self-destruct** | The guest one-liner leaves no binary or temp files. Installed clients can pass `--vanish` to wipe the binary. |
+| **Transport** | Plain TCP locally. tailcat adds WireGuard between machines. |
+
+The chat itself is a fixed input box, timestamps, a colour per user, your own lines
+highlighted, join and leave events dimmed, and local echo so a sent line appears instantly.
+The server is a Tokio TCP listener; the client is ratatui and crossterm. Two small binaries,
+no daemon left behind.
 
 ## Configuration
 
@@ -189,7 +150,7 @@ Server:
 |---|---|---|
 | Bind address | CLI arg, or `CHAT_BIND` | `127.0.0.1:8080` |
 | Local host client | `CHAT_HOST=0` to disable (skipped when stdin is not a TTY) | on |
-| Join key | `CHAT_KEY` env (pins it — dev only) | random 8 chars per boot |
+| Join key | `CHAT_KEY` env (pins it, dev only) | random 8 chars per boot |
 | tailcat | `CHAT_TAILCAT=0` to disable | auto-start |
 
 Client:
@@ -199,82 +160,107 @@ Client:
 | Target | CLI arg, or `CHAT_SERVER`; accepts `host:port`, `tc...`, `tc...:port` | `127.0.0.1:8080` |
 | Self-destruct | `--vanish` / `--self-destruct`, or `VANISH_SELF_DESTRUCT=1` | off (deletes binary on exit) |
 
-The join key is normalized: `abcd-efgh`, `ABCD EFGH`, and `ABCDEFGH` are equivalent.
-
-## Security & untraceability model
-
-- **Zero trace on disk.** No database, no chat logs, and no temp files are saved.
-  All message payloads and usernames exist solely in volatile process RAM while the
-  room is open. When the host quits, the server process terminates and everything disappears.
-- **Scrollback protection.** Both the host and guest clients use terminal alternate screen
-  buffers (`EnterAlternateScreen`). When the chat closes or you disconnect, the terminal view
-  is restored to what it was before Vanish launched — no message history or transcript is left
-  in your terminal scrollback.
-- **Automatic guest self-cleanup.** Guests who join using the one-liner (`join.sh`) run
-  inside an isolated sandbox (`mktemp -d`). When the chat ends or the host disconnects,
-  the downloaded binary and all temporary files are purged immediately from disk.
-- **`--vanish` self-destruct for installed clients.** If `vanish-client` is run with `--vanish`
-  or `--self-destruct` (or `VANISH_SELF_DESTRUCT=1`), the client unlinks and deletes its own
-  executable from disk the instant the chat finishes.
-- **Join key.** 8 random characters (~40 bits) from the OS RNG, regenerated every boot,
-  never written to disk, compared in constant time, with 3 attempts per connection.
-  It is a session bearer token, not a user identity. Wrong keys are throttled per source
-  IP: 5 failures within 60 seconds blocks that IP for 60 seconds, and each failure adds
-  a 250 ms–1 s delay. Behind tailcat every guest can share one source address, so the
-  limit also behaves as a coarse global throttle (and a brief denial-of-service lever).
-- **Revocation.** The host client gets a random per-boot token (never printed) and uses
-  it to claim host authority after authenticating. `/kick <name>` disconnects that
-  client, announces the removal, and rotates the join key; existing guests keep their
-  sessions, but the old invite cannot be reused. There is no account system, so a kicked
-  user who obtains the new key can join again under a new name.
-- **Transport.** Over localhost the traffic is plain TCP. Across machines, run it through
-  tailcat (or Tailscale): the tunnel is WireGuard-encrypted, the tailcat address is
-  itself a secret capability, and no inbound port is exposed.
-- **Be honest about limits:** plain TCP carries the join key and messages in cleartext.
-  Do not expose a bare `0.0.0.0` socket to untrusted networks — put tailcat in front.
-  There is no per-user authentication, no message persistence, and no app-layer
-  encryption beyond whatever transport you provide.
-
-## How it works
-
-- **Server** (`server/`): a Tokio TCP listener. Per connection it asks for a username,
-  then a join key (3 tries), then sends `AUTH_OK` and registers the client. Every chat
-  line is broadcast to all connected clients as `[username] message`; system events are
-  sent as `*** ... ***` lines. Duplicate usernames are rejected.
-- **Host mode**: when stdin is a terminal (and `CHAT_HOST` is not `0`), the server
-  launches the sibling `vanish-client` binary on `127.0.0.1:<port>` with inherited
-  stdio and the join key in `VANISH_KEY`. The client auto-submits the key, suppressing
-  the join-key prompt. When that client exits, the server shuts down and cleans up
-  tailcat. Server chat logs are suppressed in host mode so they cannot corrupt the TUI.
-- **Client** (`client/`): a ratatui TUI driven by a Tokio event loop. It renders its own
-  message immediately on send and skips the server's echo of it, so the chat feels
-  instant and never double-prints. A background thread feeds keyboard events; a reader
-  task feeds server lines.
-- **Kick flow**: the host's client reads `VANISH_HOST_TOKEN` from the server, sends it
-  once after `AUTH_OK`, and turns `/kick <name>` into a `KICK` command. The server
-  verifies the token, drops the target's connection, rotates the key, and sends the new
-  invite to the host's client, which refreshes the TUI line and the clipboard.
-- **tailcat glue**: the server spawns `tailcat serve <port>`, parses the address from its
-  output, and kills it on shutdown. The client spawns `tailcat forward` for `tc...`
-  targets and connects to the resulting local port.
+The join key is normalized: `abcd-efgh`, `ABCD EFGH` and `ABCDEFGH` are equivalent.
 
 ## Keyboard
 
 | Key | Action |
 |---|---|
-| Enter | submit username / key / message |
+| Enter | submit username, key, or message |
 | `/kick <name>` | host only: remove a participant and rotate the key |
 | Backspace | edit input |
-| Ctrl+C | quit (terminal is restored) |
+| Ctrl+C | quit, terminal restored |
 
-## Project layout
+## Security model
 
+**Nothing on disk.** No database, no chat log, no temp files. Messages and usernames exist
+only in process memory while the room is open. When the host quits, the server exits and
+everything is gone.
+
+**Nothing in scrollback.** Host and guest clients use the terminal's alternate screen. When
+the chat closes, the terminal returns to what it showed before Vanish started. No transcript
+is left behind.
+
+**Nothing from the guest.** The one-liner runs inside `mktemp -d`. When the chat ends or the
+host disconnects, the downloaded binary and its temporary files are purged at once.
+
+**Nothing from an installed client either.** With `--vanish`, `--self-destruct`, or
+`VANISH_SELF_DESTRUCT=1`, the client unlinks its own executable the moment the chat finishes.
+
+**The key.** Eight random characters, about 40 bits, from the OS RNG, regenerated every
+boot, never written to disk, compared in constant time, with three attempts per connection.
+It is a session bearer token, not a user identity.
+
+Wrong keys are throttled per source IP: five failures within 60 seconds block that address
+for 60 seconds, and each failure adds a 250 ms to 1 s delay. Behind tailcat every guest can
+share one source address, so the limit is also a coarse global throttle, and briefly a
+denial-of-service lever.
+
+**Revocation.** The host client gets a random per-boot token, never printed, and uses it to
+claim host authority after authenticating. `/kick <name>` drops that client, announces the
+removal, and rotates the key. Existing guests keep their sessions; the old invite cannot be
+reused. There are no accounts, so a removed user who gets the new key can rejoin under a
+new name.
+
+**Transport.** Localhost is plain TCP. Across machines, run it through tailcat or Tailscale:
+the tunnel is WireGuard-encrypted, the tailcat address is itself a secret capability, and no
+inbound port is opened.
+
+**The limits, plainly.** Plain TCP carries the join key and messages in cleartext. Do not
+expose a bare `0.0.0.0` socket to an untrusted network; put tailcat in front of it. There is
+no per-user authentication, no persistence, and no app-layer encryption beyond the transport
+you provide.
+
+## How it works
+
+**Server** (`server/`). A Tokio TCP listener. Per connection it asks for a username, then a
+join key (3 tries), then sends `AUTH_OK` and registers the client. Every chat line is
+broadcast to all connected clients as `[username] message`; system events go out as
+`*** ... ***`. Duplicate usernames are rejected.
+
+**Host mode.** When stdin is a terminal and `CHAT_HOST` is not `0`, the server launches the
+sibling `vanish-client` on `127.0.0.1:<port>` with inherited stdio and the join key in
+`VANISH_KEY`. The client submits the key itself and suppresses the prompt. When that client
+exits, the server shuts down and cleans up tailcat. Server chat logs stay off in host mode so
+they cannot corrupt the TUI.
+
+**Client** (`client/`). A ratatui TUI on a Tokio event loop. It renders a sent message
+immediately and skips the server's echo, so the chat feels instant and never double-prints. A
+background thread feeds keyboard events; a reader task feeds server lines.
+
+**Kick flow.** The host's client reads `VANISH_HOST_TOKEN` from the server, sends it once
+after `AUTH_OK`, and turns `/kick <name>` into a `KICK` command. The server verifies the
+token, drops the target, rotates the key, and sends the new invite to the host's client,
+which refreshes the TUI line and the clipboard.
+
+**tailcat glue.** The server spawns `tailcat serve <port>`, parses the address from its
+output, and kills it on shutdown. The client spawns `tailcat forward` for `tc...` targets and
+connects to the resulting local port.
+
+## Build
+
+```bash
+cargo build --release
 ```
-Cargo.toml            workspace root
-vanish                launcher: quiet spinner build, then server + host client
-.cargo/config.toml    quiet cargo output
-server/               vanish-server: Tokio TCP chat server
-client/               vanish-client: ratatui terminal client
+
+This is a Cargo workspace and builds both binaries:
+`target/release/vanish-server` and `target/release/vanish-client`.
+
+Requirements:
+
+- Rust 1.85+ (edition 2024). If your distro ships an older toolchain, install current stable
+  with [rustup](https://rustup.rs)
+  (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`).
+- Optional: [tailcat](https://github.com/tailscale/tailcat) for chatting across machines.
+- Optional: a clipboard tool for the guest invite: `wl-copy` (Wayland), `xclip` or `xsel` on
+  Linux; `pbcopy` ships with macOS.
+
+With a release install, only a terminal is needed. The Linux binaries are statically linked
+and need no Rust toolchain.
+
+```bash
+./vanish
+# equivalently: cargo run -p vanish-server
 ```
 
 ## Tests
@@ -283,18 +269,28 @@ client/               vanish-client: ratatui terminal client
 cargo test -p vanish-server
 ```
 
-Covers tailcat address parsing, bind-port parsing, and join-key normalization/comparison.
+Covers tailcat address parsing, bind-port parsing, and join-key normalization and comparison.
+
+## Project layout
+
+```text
+Cargo.toml            workspace root
+vanish                launcher: quiet spinner build, then server + host client
+.cargo/config.toml    quiet cargo output
+server/               vanish-server: Tokio TCP chat server
+client/               vanish-client: ratatui terminal client
+```
 
 ## Limitations
 
-- No message history or persistence — restart and it is gone ("vanish").
+- No message history or persistence. Restart and it is gone. That is the point.
 - No file transfer, typing indicators, or rooms.
-- Rate limiting is per source IP. Shared NAT (or tailcat, where every guest can share
-  one address) means one attacker can briefly throttle or block new joins for everyone.
-- After a kick the join key rotates; re-share the new invite with the guests you want.
-  A determined removed user who receives the new key can rejoin under another name —
-  there are no per-user credentials or cryptographic identities yet.
-- Messages are not end-to-end encrypted: the server (the host) can read them. tailcat
+- Rate limiting is per source IP. Shared NAT, or tailcat where every guest shares one
+  address, means one attacker can briefly throttle or block new joins for everyone.
+- After a kick the key rotates. Re-share the new invite with the guests you want. A
+  determined removed user who receives the new key can rejoin under another name; there are
+  no per-user credentials or cryptographic identities yet.
+- Messages are not end-to-end encrypted. The server, the host, can read them. tailcat
   protects the network path, not the server process.
-- A readable browser URL is not possible with tailcat alone; use a DNS `TXT` record or a
+- A readable browser URL is not possible with tailcat alone. Use a DNS `TXT` record or a
   different tunnel if you need one.
