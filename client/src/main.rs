@@ -85,8 +85,9 @@ impl App {
             list_state: ListState::default(),
             connected: true,
             pending_self: VecDeque::new(),
-            auto_key: std::env::var("VANISH_KEY")
-                .ok()
+            auto_key: std::env::args()
+                .nth(2)
+                .or_else(|| std::env::var("VANISH_KEY").ok())
                 .filter(|k| !k.trim().is_empty()),
             invite_cmd: std::env::var("VANISH_INVITE")
                 .ok()
@@ -666,12 +667,12 @@ async fn main() -> AppResult<()> {
         Ok(stream) => stream,
         Err(e) => {
             eprintln!("✗ Could not connect to {address} ({e}).");
-            eprintln!("  • Same machine: start `cargo run -p vanish-server` first.");
+            eprintln!("  • Same machine: start `vanish` first.");
             eprintln!(
-                "  • Another machine: use the server's LAN IP, e.g. `cargo run -p vanish-client -- 192.168.1.20:8080`"
+                "  • Another machine: use the server's LAN IP, e.g. `vanish-client 192.168.1.20:8080`"
             );
             eprintln!(
-                "  • tailcat: use the printed address, e.g. `cargo run -p vanish-client -- tc...:8080`"
+                "  • tailcat: use the printed address, e.g. `vanish-client tc...:8080`"
             );
             std::process::exit(1);
         }

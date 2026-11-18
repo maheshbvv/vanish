@@ -35,6 +35,20 @@ vanish                       # start a room, as the host
 vanish-client <address>      # join someone else's room
 ```
 
+### Zero-install join
+
+Guests don't need to install anything. The host shares a single command
+(printed at startup and copied to the clipboard). The guest pastes it and
+the chat opens:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh | sh -s -- <address> [key]
+```
+
+It downloads the prebuilt client binary (cached for instant subsequent joins),
+connects through the tunnel, passes the join key automatically, and opens
+the chat right in the terminal. No clone, no Rust toolchain, no prior setup.
+
 Prefer the source? See [Build](#build).
 
 ## Features
@@ -104,7 +118,7 @@ window, so you can share it without leaving the chat.
 Guests on the same machine open their own terminal:
 
 ```bash
-cargo run -p vanish-client
+vanish-client
 ```
 
 Guests type a **username** and the **join key** printed at startup. Open more
@@ -114,25 +128,27 @@ To run the server without opening a local client (headless, for `systemd`, a
 server box, or scripted tests):
 
 ```bash
-CHAT_HOST=0 cargo run -p vanish-server
+CHAT_HOST=0 vanish
 ```
 
 Host mode is also skipped automatically when stdin is not a terminal.
 
 ## Chatting across machines (tailcat, automatic)
 
-The server starts tailcat for you and prints a ready-to-share line:
+The server starts tailcat for you and prints a ready-to-share one-liner:
 
 ```bash
-cargo run -p vanish-server
+vanish
 # tailcat: address tcomFwWCCcjS5nKNqAod034nWoJZW0LZq
-# tailcat: guests connect with  cargo run -p vanish-client -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
+# tailcat: guests connect with  curl -fsSL .../join.sh | sh -s -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080 ABCD-EFGH
 ```
 
-A guest pastes that command:
+A guest pastes that command — no install, no clone. The client binary is
+downloaded and cached, connects through the tunnel, and opens the chat
+directly in the terminal:
 
 ```bash
-cargo run -p vanish-client -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080
+curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh | sh -s -- tcomFwWCCcjS5nKNqAod034nWoJZW0LZq:8080 ABCD-EFGH
 ```
 
 The client detects the `tc...` address, runs `tailcat forward` in the background, and
@@ -145,10 +161,13 @@ install it. Disable auto-tailcat explicitly with `CHAT_TAILCAT=0`.
 
 ```bash
 # server (listen on all interfaces)
-cargo run -p vanish-server -- 0.0.0.0:8080
+vanish 0.0.0.0:8080
 
-# client
-cargo run -p vanish-client -- 192.168.1.20:8080
+# client (installed)
+vanish-client 192.168.1.20:8080
+
+# client (zero-install)
+curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh | sh -s -- 192.168.1.20:8080
 ```
 
 ## Configuration

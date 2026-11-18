@@ -139,7 +139,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok((child, tc_addr)) => {
                 println!("tailcat: address {tc_addr}");
                 println!(
-                    "tailcat: guests connect with  cargo run -p vanish-client -- {tc_addr}:{port}"
+                    "tailcat: guests connect with  {}",
+                    join_command(&format!("{tc_addr}:{port}"), &display_key(&key))
                 );
                 println!("   (tailcat runs in the background; it stops with this server)");
                 share = Some(format!("{tc_addr}:{port}"));
@@ -164,17 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // when tailcat is active) to the client. Copy the full invite to the
     // clipboard when a clipboard tool is available.
     let invite_key = display_key(&key);
-    let invite = share
-        .as_ref()
-        .map(|addr| format!("cargo run -p vanish-client -- {addr}"));
-    let invite_copied = invite
-        .as_ref()
-        .map(|cmd| {
-            copy_to_clipboard(&format!(
-                "Join my Vanish chat:\n{cmd}\nJoin key: {invite_key}"
-            ))
-        })
-        .unwrap_or(false);
+    let target_addr = share.as_deref().unwrap_or(&address);
+    let invite_cmd = join_command(target_addr, &invite_key);
+    let invite_copied = copy_to_clipboard(&format!(
+        "Join my Vanish chat:\n{invite_cmd}\nJoin key: {invite_key}"
+    ));
     if invite_copied {
         println!("vanish: invite + join key copied to clipboard");
     }
@@ -186,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             port,
             &key,
             &host_token,
-            invite.as_deref(),
+            Some(&invite_cmd),
             &invite_key,
             invite_copied,
         ) {
@@ -582,13 +577,9 @@ async fn handle_kick(hub: &Hub, host: &str, target: &str, host_tx: &mpsc::Unboun
     let new_key = generate_key();
     let display = display_key(&new_key);
     *hub.key.write().await = new_key;
-    let copied = match hub.share.as_ref() {
-        Some(addr) => {
-            let cmd = format!("cargo run -p vanish-client -- {addr}");
-            copy_to_clipboard(&format!("Join my Vanish chat:\n{cmd}\nJoin key: {display}"))
-        }
-        None => copy_to_clipboard(&format!("Join key: {display}")),
-    };
+    let target_addr = hub.share.as_deref().unwrap_or("127.0.0.1:8080");
+    let cmd = join_command(target_addr, &display);
+    let copied = copy_to_clipboard(&format!("Join my Vanish chat:\n{cmd}\nJoin key: {display}"));
     let _ = host_tx.send(Out::Text(format!(
         "VANISH_KEY {display} {}\n",
         u8::from(copied)
@@ -634,6 +625,14 @@ fn display_key(key: &str) -> String {
         .map(|c| c.iter().collect())
         .collect();
     chunks.join("-")
+}
+
+/// The paste-able one-liner guests run to join: downloads the client binary
+/// from the latest GitHub release and connects — no prior install needed.
+fn join_command(address: &str, key: &str) -> String {
+    format!(
+        "curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh | sh -s -- {address} {key}"
+    )
 }
 
 /// 8 random Crockford-base32 chars (~40 bits). Reads the OS RNG.
