@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/install.sh | 
 
 It downloads the release for your machine, checks its sha256, and puts
 `vanish`, `vanish-server` and `vanish-client` in `~/.local/bin`
-(override with `VANISH_INSTALL_DIR`; pin with `VANISH_VERSION=v0.1.0`).
+(override with `VANISH_INSTALL_DIR`; pin with `VANISH_VERSION=v0.1.1`).
 
 ```bash
 vanish                       # start a room, as the host

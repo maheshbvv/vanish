@@ -194,14 +194,18 @@ export default function Page() {
                 <a href={SOURCE}>source on GitHub</a>
               </div>
             </div>
-            <div>
-              <p style={{ margin: "0 0 8px 4px", fontSize: "0.85rem", color: "var(--color-muted)" }}>Host a room:</p>
-              <Install command={COMMAND} note="Run vanish." />
-              <p style={{ margin: "20px 0 8px 4px", fontSize: "0.85rem", color: "var(--color-muted)" }}>Join a room (Zero-trace guest):</p>
-              <Install
-                command='sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>'
-                note="No install needed. Client auto-deletes when the room closes."
-              />
+            <div className="band__actions">
+              <div className="band__action">
+                <p style={{ margin: "0 0 8px 4px", fontSize: "0.85rem", color: "var(--color-muted)" }}>Host a room:</p>
+                <Install command={COMMAND} note="Run vanish." />
+              </div>
+              <div className="band__action">
+                <p style={{ margin: "0 0 8px 4px", fontSize: "0.85rem", color: "var(--color-muted)" }}>Join a room (Zero-trace guest):</p>
+                <Install
+                  command='sh -c "$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)" -- <address>'
+                  note="No install needed. Client auto-deletes when the room closes."
+                />
+              </div>
             </div>
           </div>
         </section>
