@@ -2,15 +2,15 @@ use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
 use std::net::{IpAddr, SocketAddr};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 
 /// Join-key guessing policy: per source IP, across connections.
 const JOIN_WINDOW: Duration = Duration::from_secs(60);

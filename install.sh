@@ -47,7 +47,7 @@ if [ "$VERSION" = "latest" ]; then
   else
     VERSION=$(curl -fsSL "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
   fi
-  [ -n "$VERSION" ] || fail "could not read the latest release; set VANISH_VERSION=v0.1.0"
+  [ -n "$VERSION" ] || fail "could not read the latest release; set VANISH_VERSION=v0.1.1"
 fi
 
 name="vanish-${VERSION}-${target}"
