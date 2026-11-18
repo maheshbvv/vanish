@@ -170,12 +170,12 @@ impl App {
                     Phase::Key => Action::Send(format!("{text}\n")),
                     Phase::Chat => {
                         // Host-only command; never echoed as a chat message.
-                        if self.host_token.is_some() {
-                            if let Some(name) = text.strip_prefix("/kick ") {
-                                let name = name.trim();
-                                if !name.is_empty() {
-                                    return Action::Send(format!("KICK {name}\n"));
-                                }
+                        if self.host_token.is_some()
+                            && let Some(name) = text.strip_prefix("/kick ")
+                        {
+                            let name = name.trim();
+                            if !name.is_empty() {
+                                return Action::Send(format!("KICK {name}\n"));
                             }
                         }
                         self.push_local_message(text.clone());
@@ -262,13 +262,12 @@ impl App {
 
         // If this is the server echoing a message we already showed locally,
         // drop the duplicate.
-        if matches!(msg.kind, MsgKind::Me) {
-            if let Some(front) = self.pending_self.front() {
-                if *front == msg.content {
-                    self.pending_self.pop_front();
-                    return None;
-                }
-            }
+        if matches!(msg.kind, MsgKind::Me)
+            && let Some(front) = self.pending_self.front()
+            && *front == msg.content
+        {
+            self.pending_self.pop_front();
+            return None;
         }
 
         self.messages.push(msg);
@@ -279,22 +278,22 @@ impl App {
 
 fn parse_line(line: &str, me: &str) -> ChatMessage {
     let time = Local::now().format("%H:%M").to_string();
-    if let Some(rest) = line.strip_prefix('[') {
-        if let Some(idx) = rest.find("] ") {
-            let sender = &rest[..idx];
-            let content = &rest[idx + 2..];
-            let kind = if sender == me {
-                MsgKind::Me
-            } else {
-                MsgKind::Chat
-            };
-            return ChatMessage {
-                time,
-                sender: sender.to_string(),
-                content: content.to_string(),
-                kind,
-            };
-        }
+    if let Some(rest) = line.strip_prefix('[')
+        && let Some(idx) = rest.find("] ")
+    {
+        let sender = &rest[..idx];
+        let content = &rest[idx + 2..];
+        let kind = if sender == me {
+            MsgKind::Me
+        } else {
+            MsgKind::Chat
+        };
+        return ChatMessage {
+            time,
+            sender: sender.to_string(),
+            content: content.to_string(),
+            kind,
+        };
     }
     ChatMessage {
         time,
@@ -503,12 +502,11 @@ fn spawn_input_thread() -> mpsc::UnboundedReceiver<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         loop {
-            if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-                if let Ok(ev) = event::read() {
-                    if tx.send(ev).is_err() {
-                        break;
-                    }
-                }
+            if event::poll(Duration::from_millis(100)).unwrap_or(false)
+                && let Ok(ev) = event::read()
+                && tx.send(ev).is_err()
+            {
+                break;
             }
         }
     });
@@ -566,12 +564,12 @@ async fn run_app(
 
 /// Split `<tc-address>[:remote_port]`. A bare tc address defaults to port 8080.
 fn split_tc(s: &str) -> (String, u16) {
-    if let Some(idx) = s.rfind(':') {
-        if let Ok(port) = s[idx + 1..].parse::<u16>() {
-            let tc = &s[..idx];
-            if tc.starts_with("tc") {
-                return (tc.to_string(), port);
-            }
+    if let Some(idx) = s.rfind(':')
+        && let Ok(port) = s[idx + 1..].parse::<u16>()
+    {
+        let tc = &s[..idx];
+        if tc.starts_with("tc") {
+            return (tc.to_string(), port);
         }
     }
     (s.to_string(), 8080)
@@ -729,11 +727,9 @@ async fn main() -> AppResult<()> {
         println!("Goodbye.");
     }
 
-    if self_destruct {
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = std::fs::remove_file(&exe);
-            println!("vanish: client binary deleted from disk (zero trace).");
-        }
+    if self_destruct && let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(&exe);
+        println!("vanish: client binary deleted from disk (zero trace).");
     }
 
     Ok(())
