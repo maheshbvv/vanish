@@ -631,7 +631,7 @@ fn display_key(key: &str) -> String {
 /// from the latest GitHub release and connects — no prior install needed.
 fn join_command(address: &str, key: &str) -> String {
     format!(
-        "curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh | sh -s -- {address} {key}"
+        "sh -c \"$(curl -fsSL https://raw.githubusercontent.com/maheshbvv/vanish/main/join.sh)\" -- {address} {key}"
     )
 }
 

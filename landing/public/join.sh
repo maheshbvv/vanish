@@ -28,9 +28,10 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 # If vanish-client is already installed on the system, run it directly
 if command -v vanish-client >/dev/null 2>&1; then
   if [ ! -t 0 ] && [ -e /dev/tty ]; then
-    exec </dev/tty
+    exec vanish-client "$ADDRESS" </dev/tty
+  else
+    exec vanish-client "$ADDRESS"
   fi
-  exec vanish-client "$ADDRESS"
 fi
 
 REPO="maheshbvv/vanish"
@@ -94,9 +95,9 @@ else
 fi
 
 # Reconnect stdin to controlling terminal if available, because curl | sh
-# leaves stdin attached to the pipe, which would break raw mode / ratatui.
+# leaves stdin attached to the pipe, which would break raw mode / keyboard events.
 if [ ! -t 0 ] && [ -e /dev/tty ]; then
-  exec </dev/tty
+  exec "$bin" "$ADDRESS" </dev/tty
+else
+  exec "$bin" "$ADDRESS"
 fi
-
-exec "$bin" "$ADDRESS"
